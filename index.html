@@ -231,52 +231,13 @@
       #bttBtn{bottom:18px;right:12px;width:30px;height:30px;font-size:14px}
       .bio-tag{font-size:12px}
     }
-    /* MARKDOWN MODAL */
-    .md-overlay{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .35s ease;padding:24px}
-    .md-overlay.show{opacity:1;pointer-events:auto}
-    .md-modal{position:relative;max-width:680px;width:100%;max-height:85vh;background:rgba(14,14,24,.96);border:1px solid rgba(167,139,250,.15);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;transform:scale(.94) translateY(18px);transition:transform .4s cubic-bezier(.34,1.56,.64,1)}
-    .md-overlay.show .md-modal{transform:scale(1) translateY(0)}
-    .md-close{position:absolute;top:12px;right:12px;z-index:10;width:32px;height:32px;border-radius:50%;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.35);color:rgba(255,255,255,.5);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .3s;font-family:inherit;backdrop-filter:blur(4px)}
-    .md-close:hover{background:rgba(167,139,250,.2);border-color:#a78bfa;color:#fff}
-    .md-body{padding:40px 36px 36px;overflow-y:auto;flex:1;min-height:0}
-    .md-body::-webkit-scrollbar{width:4px}
-    .md-body::-webkit-scrollbar-thumb{background:rgba(167,139,250,.25);border-radius:4px}
-    .md-body h1{font-size:26px;font-weight:700;color:#fff;margin-bottom:4px;letter-spacing:2px}
-    .md-body h2{font-size:19px;font-weight:700;color:#e2e2e8;margin:28px 0 10px;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid rgba(167,139,250,.12)}
-    .md-body h3{font-size:15px;font-weight:600;color:#c8c8d4;margin:18px 0 6px}
-    .md-body h4{font-size:13px;font-weight:600;color:#b0b0bc;margin:14px 0 4px}
-    .md-body p{font-size:13px;line-height:1.8;color:#c0c0cc;margin-bottom:12px}
-    .md-body ul,.md-body ol{padding-left:20px;margin-bottom:12px}
-    .md-body li{font-size:13px;line-height:1.8;color:#c0c0cc;margin-bottom:4px}
-    .md-body li::marker{color:#a78bfa}
-    .md-body strong{color:#e8e0f0;font-weight:600}
-    .md-body em{color:#b8a8d8;font-style:italic}
-    .md-body code{background:rgba(167,139,250,.12);color:#c8b8e8;padding:2px 6px;border-radius:4px;font-size:11px;font-family:'Courier New',monospace}
-    .md-body pre{background:rgba(0,0,0,.3);border:1px solid rgba(167,139,250,.1);border-radius:10px;padding:14px 16px;overflow-x:auto;margin-bottom:12px}
-    .md-body pre code{background:none;padding:0;color:#c8c8d4}
-    .md-body blockquote{border-left:2px solid #a78bfa;padding:6px 14px;margin:12px 0;background:rgba(167,139,250,.04);border-radius:0 8px 8px 0;font-size:13px;color:#b0a8c0}
-    .md-body hr{border:none;height:1px;background:rgba(167,139,250,.08);margin:20px 0}
-    .md-body table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12px}
-    .md-body th{background:rgba(167,139,250,.1);color:#e2e2e8;padding:8px 10px;text-align:left;font-weight:600;border-bottom:1px solid rgba(167,139,250,.15)}
-    .md-body td{color:#c0c0cc;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
-    .md-body a{color:#a78bfa;text-decoration:none;border-bottom:1px dashed rgba(167,139,250,.3);transition:border-color .2s}
-    .md-body a:hover{border-color:#a78bfa}
-    .md-body .loading{text-align:center;color:#7a7a8a;font-size:14px;padding:40px 0}
-    .fut-card{cursor:pointer}
-    @media(max-width:640px){
-      .md-overlay{padding:0}
-      .md-modal{max-width:100vw;max-height:100vh;height:100vh;border-radius:0}
-      .md-body{padding:40px 20px 28px}
-      .md-body h1{font-size:22px}
-      .md-body h2{font-size:17px}
-    }
   </style>
 </head>
 <body>
   <audio id="bgAudio" src="bgm.mp3" loop preload="auto"></audio>
   <div class="mute-btn" id="muteBtn">♫</div>
   <div class="hero" id="hero">
-    <img class="bg" id="heroBg" src="bg.png" alt="" />
+    <img class="bg" id="heroBg" src="stars-bg.png" alt="" />
     <div class="hero-glow" id="heroGlow"></div>
     <div class="overlay"></div>
     <div class="h-text">
@@ -526,25 +487,25 @@
       <div class="fut-h">🚀 未来方向</div>
       <div class="fut-st">永不止步 · 一直向前</div>
       <div class="fut-grid" id="futGrid">
-        <div class="fut-card" data-md="ai-ml.md">
+        <div class="fut-card" onclick="location.href='topic.html?t=ai-ml'">
           <span class="fut-icon">🧠</span>
           <div class="fut-title">AI & 机器学习</div>
           <div class="fut-desc">从多元回归迈向深度学习。<br>神经网络、LSTM 时序预测，<br>让能耗模型自适应进化。</div>
           <div class="fut-tags"><span class="fut-tag">Neural Networks</span><span class="fut-tag">LSTM</span><span class="fut-tag">AutoML</span></div>
         </div>
-        <div class="fut-card" data-md="iot.md">
+        <div class="fut-card" onclick="location.href='topic.html?t=iot'">
           <span class="fut-icon">📡</span>
           <div class="fut-title">IoT 万物互联</div>
           <div class="fut-desc">ESP32 → 分布式传感器网络。<br>树莓派边缘计算 + MQTT 协议，<br>让每个设备都能"说话"。</div>
           <div class="fut-tags"><span class="fut-tag">ESP32</span><span class="fut-tag">Raspberry Pi</span><span class="fut-tag">MQTT</span></div>
         </div>
-        <div class="fut-card" data-md="game-dev.md">
+        <div class="fut-card" onclick="location.href='topic.html?t=game-dev'">
           <span class="fut-icon">🎮</span>
           <div class="fut-title">创意编程</div>
           <div class="fut-desc">PyGame → 独立游戏开发。<br>五子棋 AI、互动小游戏——<br>用代码创造可交互的世界。</div>
           <div class="fut-tags"><span class="fut-tag">PyGame</span><span class="fut-tag">Game Dev</span><span class="fut-tag">互动体验</span></div>
         </div>
-        <div class="fut-card" data-md="content.md">
+        <div class="fut-card" onclick="location.href='topic.html?t=content-creation'">
           <span class="fut-icon">📺</span>
           <div class="fut-title">内容创作</div>
           <div class="fut-desc">B站「晨曦的宇宙」持续更新。<br>分享编程、建模与创客项目，<br>让知识流动起来。</div>
@@ -581,7 +542,6 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
     var hero=document.getElementById('hero'),heroBg=document.getElementById('heroBg'),sHint=document.getElementById('sHint'),hGlow=document.getElementById('heroGlow'),hPg=document.getElementById('heroPg'),hDots=hPg.querySelectorAll('.h-dot');
 
@@ -744,35 +704,6 @@
     var futCards=document.querySelectorAll('.fut-card');
     if(futCards.length&&'IntersectionObserver'in window){var obsCards=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('visible');obsCards.unobserve(e.target);}});},{threshold:.15});futCards.forEach(function(c){obsCards.observe(c);});}else{futCards.forEach(function(c){c.classList.add('visible');});}
 
-    // Markdown modal
-    var mdOverlay=document.getElementById('mdOverlay'),mdBody=document.getElementById('mdBody'),mdClose=document.getElementById('mdClose');
-    function openMd(url){
-      mdBody.innerHTML='<div class="loading">加载中...</div>';
-      mdOverlay.classList.add('show');
-      document.body.style.overflow='hidden';
-      fetch(url).then(function(r){if(!r.ok)throw Error('加载失败');return r.text();})
-        .then(function(t){mdBody.innerHTML=marked.parse(t);})
-        .catch(function(){mdBody.innerHTML='<div class="loading" style="color:#e06060;">⚠ 加载失败，请检查网络后重试</div>';});
-    }
-    function closeMd(){
-      mdOverlay.classList.remove('show');
-      document.body.style.overflow='';
-    }
-    futCards.forEach(function(c){
-      c.addEventListener('click',function(){
-        var md=c.getAttribute('data-md');
-        if(md)openMd(md);
-      });
-    });
-    mdClose.addEventListener('click',closeMd);
-    mdOverlay.addEventListener('click',function(e){if(e.target===mdOverlay)closeMd();});
-    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&mdOverlay.classList.contains('show'))closeMd();});
   </script>
-  <div class="md-overlay" id="mdOverlay">
-    <div class="md-modal">
-      <button class="md-close" id="mdClose">✕</button>
-      <div class="md-body" id="mdBody"></div>
-    </div>
-  </div>
 </body>
 </html>

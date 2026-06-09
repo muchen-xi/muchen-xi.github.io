@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no" />
+  <title>晨曦的宇宙 · 文章</title>
+  <style>
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Microsoft YaHei',system-ui,sans-serif;background:#0a0a10;color:#e2e2e8;overflow-x:hidden;min-height:100vh}
+    ::-webkit-scrollbar{width:4px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:rgba(167,139,250,.25);border-radius:4px}
+
+    /* TOP BAR */
+    .topbar{position:sticky;top:0;z-index:50;background:rgba(10,10,16,.92);backdrop-filter:blur(12px);border-bottom:1px solid rgba(167,139,250,.08);padding:0 24px;display:flex;align-items:center;height:52px;gap:16px}
+    .topbar .back{color:rgba(255,255,255,.5);text-decoration:none;font-size:13px;transition:color .2s;white-space:nowrap;display:flex;align-items:center;gap:4px;font-family:inherit}
+    .topbar .back:hover{color:#a78bfa}
+    .topbar .sep{color:rgba(255,255,255,.1);font-size:13px}
+    .topbar .tt{font-size:14px;font-weight:600;color:#e2e2e8;letter-spacing:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .topbar .desc{font-size:11px;color:#7a7a8a;margin-left:auto;display:none}
+
+    /* LAYOUT */
+    .layout{display:flex;max-width:1060px;margin:0 auto;min-height:calc(100vh - 52px)}
+    .sidebar{width:220px;flex-shrink:0;border-right:1px solid rgba(167,139,250,.06);padding:16px 0;overflow-y:auto;background:rgba(255,255,255,.01)}
+    .sidebar .s-title{font-size:10px;font-weight:600;color:#6a6a7a;letter-spacing:2px;padding:0 16px;margin-bottom:8px;text-transform:uppercase}
+    .sidebar .s-item{display:block;width:100%;text-align:left;padding:8px 16px;font-size:12px;color:#9a9aaa;cursor:pointer;border:none;background:none;font-family:inherit;transition:all .2s;line-height:1.5;border-left:2px solid transparent}
+    .sidebar .s-item:hover{color:#d0d0dc;background:rgba(167,139,250,.04)}
+    .sidebar .s-item.active{color:#a78bfa;background:rgba(167,139,250,.06);border-left-color:#a78bfa;font-weight:600}
+    .main{flex:1;padding:28px 36px 48px;min-width:0;overflow:hidden}
+    .main .loading-wrap{display:flex;align-items:center;justify-content:center;height:200px;color:#7a7a8a;font-size:14px}
+
+    /* MARKDOWN CONTENT */
+    .main h1{font-size:26px;font-weight:700;color:#fff;margin-bottom:6px;letter-spacing:2px;line-height:1.35}
+    .main h2{font-size:19px;font-weight:700;color:#e2e2e8;margin:28px 0 10px;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid rgba(167,139,250,.12)}
+    .main h3{font-size:15px;font-weight:600;color:#c8c8d4;margin:18px 0 6px}
+    .main h4{font-size:13px;font-weight:600;color:#b0b0bc;margin:14px 0 4px}
+    .main p{font-size:14px;line-height:1.9;color:#c0c0cc;margin-bottom:12px}
+    .main ul,.main ol{padding-left:20px;margin-bottom:14px}
+    .main li{font-size:14px;line-height:1.9;color:#c0c0cc;margin-bottom:4px}
+    .main li::marker{color:#a78bfa}
+    .main strong{color:#e8e0f0;font-weight:600}
+    .main em{color:#b8a8d8;font-style:italic}
+    .main code{background:rgba(167,139,250,.12);color:#c8b8e8;padding:2px 6px;border-radius:4px;font-size:12px;font-family:'Courier New',monospace}
+    .main pre{background:rgba(0,0,0,.3);border:1px solid rgba(167,139,250,.1);border-radius:10px;padding:14px 16px;overflow-x:auto;margin-bottom:14px}
+    .main pre code{background:none;padding:0;color:#c8c8d4;font-size:11px;line-height:1.5}
+    .main blockquote{border-left:2px solid #a78bfa;padding:6px 14px;margin:12px 0;background:rgba(167,139,250,.04);border-radius:0 8px 8px 0;font-size:14px;color:#b0a8c0}
+    .main blockquote p{margin-bottom:4px}
+    .main hr{border:none;height:1px;background:rgba(167,139,250,.08);margin:20px 0}
+    .main table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:13px}
+    .main th{background:rgba(167,139,250,.1);color:#e2e2e8;padding:8px 10px;text-align:left;font-weight:600;border-bottom:1px solid rgba(167,139,250,.15)}
+    .main td{color:#c0c0cc;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+    .main a{color:#a78bfa;text-decoration:none;border-bottom:1px dashed rgba(167,139,250,.3);transition:border-color .2s}
+    .main a:hover{border-color:#a78bfa}
+    .main img{max-width:100%;border-radius:8px;margin:8px 0}
+
+    /* MOBILE */
+    @media(max-width:700px){
+      .layout{flex-direction:column}
+      .sidebar{width:100%;border-right:none;border-bottom:1px solid rgba(167,139,250,.06);padding:8px 0;overflow-x:auto;overflow-y:hidden;white-space:nowrap;display:flex;gap:4px}
+      .sidebar .s-title{display:none}
+      .sidebar .s-item{display:inline-block;width:auto;padding:6px 12px;font-size:11px;border-left:none;border-bottom:2px solid transparent;border-radius:6px 6px 0 0;white-space:nowrap}
+      .sidebar .s-item.active{border-left:none;border-bottom-color:#a78bfa}
+      .main{padding:20px 16px 36px}
+      .main h1{font-size:22px}
+      .main h2{font-size:17px}
+      .main p,.main li{font-size:13px}
+      .topbar{padding:0 14px;height:44px}
+      .topbar .desc{display:none}
+    }
+    @media(min-width:701px){
+      .topbar .desc{display:block}
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a class="back" href="index.html">← 返回首页</a>
+    <span class="sep">/</span>
+    <span class="tt" id="topicTitle">加载中...</span>
+    <span class="desc" id="topicDesc"></span>
+  </div>
+
+  <div class="layout">
+    <div class="sidebar" id="sidebar">
+      <div class="s-title">📄 目录</div>
+    </div>
+    <div class="main" id="main">
+      <div class="loading-wrap">加载中...</div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    var sidebar=document.getElementById('sidebar'),main=document.getElementById('main'),
+        topicTitle=document.getElementById('topicTitle'),topicDesc=document.getElementById('topicDesc');
+
+    function getTopic(){
+      var p=new URLSearchParams(window.location.search);
+      return p.get('t')||'ai-ml';
+    }
+
+    var topic=getTopic(),indexData=null,activeFile=null;
+
+    function renderSidebar(){
+      var items=sidebar.querySelectorAll('.s-item');
+      items.forEach(function(i){i.remove();});
+
+      indexData.articles.forEach(function(a,i){
+        var btn=document.createElement('button');
+        btn.className='s-item';
+        btn.textContent=a.title;
+        btn.addEventListener('click',function(){loadArticle(a.file,i);});
+        sidebar.appendChild(btn);
+        if(i===0){btn.classList.add('active');activeFile=a.file;}
+      });
+    }
+
+    function loadArticle(file,idx){
+      activeFile=file;
+      var items=sidebar.querySelectorAll('.s-item');
+      items.forEach(function(b,j){b.classList.toggle('active',j===idx);});
+
+      main.innerHTML='<div class="loading-wrap">加载中...</div>';
+
+      fetch('content/'+topic+'/'+file)
+        .then(function(r){if(!r.ok)throw Error('Not found');return r.text();})
+        .then(function(t){main.innerHTML=marked.parse(t);})
+        .catch(function(){main.innerHTML='<div class="loading-wrap" style="color:#e06060;">⚠ 文章加载失败，请检查网络后重试</div>';});
+
+      // Update URL hash
+      if(window.history.replaceState){
+        window.history.replaceState(null,'','topic.html?t='+topic+'#'+file);
+      }
+    }
+
+    // Init
+    fetch('content/'+topic+'/index.json')
+      .then(function(r){if(!r.ok)throw Error('Topic not found');return r.json();})
+      .then(function(d){
+        indexData=d;
+        topicTitle.textContent=d.title;
+        topicDesc.textContent=d.description;
+        document.title=d.title+' · 晨曦的宇宙';
+        renderSidebar();
+
+        // Check hash for direct article link
+        var hash=window.location.hash.replace('#','');
+        var found=-1;
+        if(hash){
+          d.articles.forEach(function(a,i){if(a.file===hash)found=i;});
+        }
+        loadArticle(d.articles[Math.max(found,0)].file,Math.max(found,0));
+      })
+      .catch(function(){
+        topicTitle.textContent='专题未找到';
+        main.innerHTML='<div class="loading-wrap" style="color:#e06060;">⚠ 专题「'+topic+'」不存在<br><br><a href="index.html" style="color:#a78bfa;">← 返回首页</a></div>';
+      });
+
+    // Keyboard: left/right to switch articles
+    document.addEventListener('keydown',function(e){
+      if(!indexData)return;
+      var curIdx=-1;
+      indexData.articles.forEach(function(a,i){if(a.file===activeFile)curIdx=i;});
+      if(e.key==='ArrowDown'||e.key==='ArrowRight'){
+        e.preventDefault();
+        var next=Math.min(curIdx+1,indexData.articles.length-1);
+        if(next!==curIdx)loadArticle(indexData.articles[next].file,next);
+      }
+      if(e.key==='ArrowUp'||e.key==='ArrowLeft'){
+        e.preventDefault();
+        var prev=Math.max(curIdx-1,0);
+        if(prev!==curIdx)loadArticle(indexData.articles[prev].file,prev);
+      }
+    });
+  </script>
+</body>
+</html>
