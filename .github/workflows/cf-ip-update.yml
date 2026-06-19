@@ -1,0 +1,31 @@
+name: CF优选IP自动更新
+on:
+  schedule:
+    - cron: '37 */6 * * *'   # 每6小时，37分避开整点
+  workflow_dispatch:          # 允许手动触发
+
+jobs:
+  scan-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载 CloudflareSpeedTest
+        run: |
+          curl -L -o cfst.tar.gz https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.2.5/CloudflareST_linux_amd64.tar.gz
+          tar xzf cfst.tar.gz
+          chmod +x CloudflareST
+
+      - name: 测速扫描优选IP
+        run: |
+          ./CloudflareST -n 200 -t 4 -tl 300 -sl 5 -o result.csv -url https://chenxiuniverse.top/__health
+          echo "=== TOP 3 ==="
+          head -4 result.csv
+
+      - name: 更新阿里云DNS
+        run: |
+          pip install alibabacloud_alidns20150109
+          python3 scripts/update-dns.py result.csv
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
