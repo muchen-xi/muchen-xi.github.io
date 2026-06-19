@@ -4,6 +4,7 @@
   "articles": [
     {"file": "01-hardware-journey.md", "title": "硬件之路：从 ESP32 到树莓派"},
     {"file": "02-smart-home-vision.md", "title": "智能家居实验台设想"},
-    {"file": "03-weather-station-v2.md", "title": "天气站 v2.0 规划"}
+    {"file": "03-weather-station-v2.md", "title": "天气站 v2.0 规划"},
+    {"file": "04-pimanager-pillow-ui.md", "title": "PiManager v2：从 CTk 到自建 Pillow UI 库"}
   ]
 }
