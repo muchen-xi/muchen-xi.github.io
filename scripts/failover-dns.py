@@ -9,10 +9,10 @@ from alibabacloud_alidns20150109 import models as alidns_models
 from alibabacloud_tea_openapi import models as open_api_models
 
 DOMAIN = 'chenxiuniverse.top'
-PRIMARY_WWW = 'muchen-xi.github.io'
-BACKUP_WWW = 'backup.chenxiuniverse.top'
-PRIMARY_A = ['185.199.108.153', '185.199.109.153', '185.199.110.153', '185.199.111.153']
-BACKUP_A = ['104.21.80.200', '172.67.180.100', '104.21.64.150']
+PRIMARY_WWW = 'chenxiuniverse-top.pages.dev'      # CF Pages 主站
+BACKUP_WWW = 'muchen-xi.github.io'                # GitHub Pages 备胎
+PRIMARY_A = ['185.199.108.153', '185.199.109.153', '185.199.110.153', '185.199.111.153']  # root 保持 GitHub Pages
+BACKUP_A = PRIMARY_A
 
 def main():
     action = sys.argv[1] if len(sys.argv) > 1 else 'check'
@@ -64,7 +64,7 @@ def main():
                 ))
                 print(f'@ A #{i}: {a_records[i].value} → {ip}')
 
-    print(f'✅ DNS 已切换到: {"备站(CF Pages)" if action == "backup" else "主站(GitHub Pages)"}')
+    print(f'✅ DNS 已切换到: {"备站(GitHub Pages)" if action == "backup" else "主站(CF Pages)"}')
 
 
 if __name__ == '__main__':
