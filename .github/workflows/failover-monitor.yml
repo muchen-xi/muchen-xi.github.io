@@ -1,0 +1,40 @@
+name: 容灾监控
+on:
+  schedule:
+    - cron: '*/5 * * * *'     # 每5分钟
+  workflow_dispatch:            # 手动触发
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检查主站健康
+        id: check
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 https://muchen-xi.github.io)
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "主站状态码: $STATUS"
+          if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 500 ]; then
+            echo "healthy=true" >> $GITHUB_OUTPUT
+          else
+            echo "healthy=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 安装阿里云SDK
+        run: pip install alibabacloud_alidns20150109
+
+      - name: DNS切到备站
+        if: steps.check.outputs.healthy == 'false'
+        run: python3 scripts/failover-dns.py backup
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+
+      - name: DNS恢复到主站
+        if: steps.check.outputs.healthy == 'true'
+        run: python3 scripts/failover-dns.py restore
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
