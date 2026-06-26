@@ -13,7 +13,7 @@ jobs:
       - name: 检查主站健康
         id: check
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 https://chenxiuniverse-top.pages.dev)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 https://www.chenxiuniverse.top)
           echo "status=$STATUS" >> $GITHUB_OUTPUT
           echo "主站状态码: $STATUS"
           if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 500 ]; then

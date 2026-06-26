@@ -1,0 +1,127 @@
+name: CF优选IP智能优化
+on:
+  schedule:
+    - cron: '37 */6 * * *'   # 每6小时，37分避开整点
+  workflow_dispatch:          # 允许手动触发
+
+jobs:
+  # ─── Job 1: 境外测速（US runner，CloudflareSpeedTest） ───
+  overseas-scan:
+    name: 境外测速 (CloudflareST)
+    runs-on: ubuntu-latest
+    outputs:
+      ip_count: ${{ steps.scan.outputs.ip_count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载 CloudflareSpeedTest
+        run: |
+          curl -L -o cfst.tar.gz https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.2.5/CloudflareST_linux_amd64.tar.gz
+          tar xzf cfst.tar.gz
+          chmod +x CloudflareST
+
+      - name: 境外测速扫描
+        id: scan
+        run: |
+          # 用 www 子域而非根域（根域是 JS 跳转，CloudflareST 测速不准）
+          ./CloudflareST -n 200 -t 4 -tl 300 -sl 5 -o result.csv -url https://www.chenxiuniverse.top
+          echo "=== 境外 Top 3 ==="
+          head -4 result.csv
+          IP_COUNT=$(tail -n +2 result.csv | wc -l)
+          echo "ip_count=$IP_COUNT" >> $GITHUB_OUTPUT
+
+      - name: 上传 result.csv
+        uses: actions/upload-artifact@v4
+        with:
+          name: overseas-result
+          path: result.csv
+          retention-days: 1
+
+  # ─── Job 2: 境内测速（ITDog Playwright，从中国节点测） ───
+  china-scan:
+    name: 境内测速 (ITDog)
+    runs-on: ubuntu-latest
+    needs: overseas-scan
+    # 即使境外测速失败也继续（有 FALLBACK_IPS 兜底）
+    if: always() && (needs.overseas-scan.result == 'success' || needs.overseas-scan.result == 'failure')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载境外测速结果
+        uses: actions/download-artifact@v4
+        with:
+          name: overseas-result
+        continue-on-error: true
+
+      - name: 安装 Playwright
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: 境内测速
+        run: |
+          python3 scripts/china_speed_test.py result.csv china_result.csv
+          echo "=== 境内 Top 3 ==="
+          head -4 china_result.csv
+
+      - name: 上传 china_result.csv
+        uses: actions/upload-artifact@v4
+        with:
+          name: china-result
+          path: china_result.csv
+          retention-days: 1
+
+  # ─── Job 3: 更新 DNS（分线路: 境外→oversea, 境内→default） ───
+  update-dns:
+    name: 更新阿里云DNS
+    runs-on: ubuntu-latest
+    needs: [overseas-scan, china-scan]
+    if: always() && (needs.overseas-scan.result == 'success' || needs.china-scan.result == 'success')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载测速结果
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+
+      - name: 安装阿里云SDK
+        run: pip install alibabacloud_alidns20150109
+
+      - name: 健康验证（可选）
+        id: health
+        continue-on-error: true
+        run: |
+          if [ -f overseas-result/result.csv ]; then
+            cp overseas-result/result.csv .
+          fi
+          if [ -f china-result/china_result.csv ]; then
+            cp china-result/china_result.csv .
+          fi
+          python3 scripts/health_check.py result.csv --output valid_overseas.csv || true
+          python3 scripts/health_check.py china_result.csv --output valid_china.csv || true
+
+      - name: 更新 DNS（分线路）
+        run: |
+          OVERSEAS_CSV="result.csv"
+          CHINA_CSV="china_result.csv"
+          if [ -f valid_overseas.csv ] && [ -s valid_overseas.csv ]; then
+            OVERSEAS_CSV="valid_overseas.csv"
+            echo "使用健康验证后的境外 IP"
+          fi
+          if [ -f valid_china.csv ] && [ -s valid_china.csv ]; then
+            CHINA_CSV="valid_china.csv"
+            echo "使用健康验证后的境内 IP"
+          fi
+          python3 scripts/update-dns.py "$OVERSEAS_CSV" "$CHINA_CSV"
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+
+      - name: 输出摘要
+        if: always()
+        run: |
+          echo "::notice::DNS 更新完成 @ $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "境外优选:"
+          cat result.csv 2>/dev/null || echo "  无"
+          echo "境内优选:"
+          cat china_result.csv 2>/dev/null || echo "  无"
