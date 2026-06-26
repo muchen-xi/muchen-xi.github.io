@@ -1,0 +1,60 @@
+name: 监控报告
+on:
+  schedule:
+    # 每天 7:00 北京时间 = 23:00 UTC (前一天)
+    - cron: '0 23 * * *'
+    # 每周五 15:30 北京时间 = 07:30 UTC
+    - cron: '30 7 * * 5'
+  workflow_dispatch:
+    inputs:
+      type:
+        description: '报告类型'
+        required: true
+        type: choice
+        options: ['daily', 'weekly']
+
+jobs:
+  report:
+    name: 生成并发送报告
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 获取完整历史，用于事件读取
+
+      - name: 安装阿里云SDK
+        run: pip install alibabacloud_alidns20150109
+
+      - name: 决定报告类型
+        id: type
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "report=${{ inputs.type }}" >> $GITHUB_OUTPUT
+          elif [ "$(date -u +%H)" = "07" ]; then
+            # 07:30 UTC = 周五 15:30 北京 → 周报
+            echo "report=weekly" >> $GITHUB_OUTPUT
+          else
+            # 23:00 UTC = 每天 7:00 北京 → 日报
+            echo "report=daily" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 生成并发送报告
+        run: python3 scripts/report_mailer.py ${{ steps.type.outputs.report }}
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_SENDER_NAME: ${{ secrets.SMTP_SENDER_NAME }}
+          REPORT_TO: ${{ secrets.REPORT_TO }}
+        continue-on-error: true
+
+      - name: 上传报告（备份）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ steps.type.outputs.report }}
+          path: logs/report_*.html
+          retention-days: 30

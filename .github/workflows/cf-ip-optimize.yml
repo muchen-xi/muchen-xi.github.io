@@ -117,11 +117,54 @@ jobs:
           ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
           ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
 
-      - name: 输出摘要
+      - name: 输出摘要 + 记录事件
         if: always()
         run: |
           echo "::notice::DNS 更新完成 @ $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          echo "境外优选:"
-          cat result.csv 2>/dev/null || echo "  无"
-          echo "境内优选:"
-          cat china_result.csv 2>/dev/null || echo "  无"
+
+          # 读取境外 IP
+          OVERSEAS_IPS=""
+          if [ -f result.csv ]; then
+            OVERSEAS_IPS=$(python3 -c "
+          import csv
+          ips=[]
+          with open('result.csv') as f:
+              for r in csv.DictReader(f):
+                  ip=r.get('IP地址') or r.get('IP 地址') or r.get('IP','')
+                  if ip: ips.append(ip)
+          print(','.join(ips[:3]))
+          ")
+          fi
+
+          # 读取境内 IP
+          CHINA_IPS=""
+          if [ -f china_result.csv ]; then
+            CHINA_IPS=$(python3 -c "
+          import csv
+          ips=[]
+          with open('china_result.csv') as f:
+              for r in csv.DictReader(f):
+                  ip=r.get('IP地址') or r.get('IP 地址') or r.get('IP','')
+                  if ip: ips.append(ip)
+          print(','.join(ips[:3]))
+          ")
+          fi
+
+          if [ -n "$OVERSEAS_IPS" ] || [ -n "$CHINA_IPS" ]; then
+            python3 scripts/monitor_logger.py ip-update \
+              --overseas "$OVERSEAS_IPS" \
+              --china "$CHINA_IPS" \
+              --changed
+          fi
+
+          # 提交日志
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add logs/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "无日志变更"
+          else
+            git pull --rebase --autostash origin HEAD 2>/dev/null || true
+            git commit -m "📊 IP优选事件记录"
+            git push
+          fi
