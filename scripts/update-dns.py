@@ -82,8 +82,8 @@ def get_record_ids_from_api(client: AlidnsClient, rr: str, line: str) -> list[st
     """从阿里云 API 查询现有 A 记录的 RecordId"""
     req = alidns_models.DescribeDomainRecordsRequest(
         domain_name=DOMAIN,
-        rr_keyword=rr,
-        type_keyword="A",
+        rrkey_word=rr,
+        type_key_word="A",
         line=line,
     )
     resp = client.describe_domain_records(req)
@@ -98,8 +98,8 @@ def get_current_ips(client: AlidnsClient, rr: str, line: str) -> list[str]:
     """获取当前 DNS 记录的 IP 列表"""
     req = alidns_models.DescribeDomainRecordsRequest(
         domain_name=DOMAIN,
-        rr_keyword=rr,
-        type_keyword="A",
+        rrkey_word=rr,
+        type_key_word="A",
         line=line,
     )
     resp = client.describe_domain_records(req)

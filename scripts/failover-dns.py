@@ -105,8 +105,8 @@ def get_records(client: AlidnsClient, rr: str, line: str) -> list[dict]:
     """
     req = alidns_models.DescribeDomainRecordsRequest(
         domain_name=DOMAIN,
-        rr_keyword=rr,
-        type_keyword="A",
+        rrkey_word=rr,
+        type_key_word="A",
         line=line,
     )
     resp = client.describe_domain_records(req)
