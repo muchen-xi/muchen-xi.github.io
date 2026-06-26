@@ -4,6 +4,9 @@ on:
     - cron: '37 */6 * * *'   # 每6小时，37分避开整点
   workflow_dispatch:          # 允许手动触发
 
+permissions:
+  contents: write
+
 jobs:
   # ─── Job 1: 境外测速（US runner，CloudflareSpeedTest） ───
   overseas-scan:
