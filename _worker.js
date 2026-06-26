@@ -10,7 +10,7 @@ export default {
     // ── PV 计数器代理 ──
     if (url.pathname === '/ping' || url.pathname === '/stats') {
       const target = new URL(url.pathname + url.search, COUNTER);
-      return fetch(new Request(target, request));
+      return fetch(target, request);
     }
 
     // Redirect apex to www
