@@ -16,6 +16,16 @@ export default {
       return new Response('Not Found', { status: 404 });
     }
 
+    // ── 内部报告代理: /_report_stats → counter /stats (需 Bearer) ──
+    if (url.pathname === '/_report_stats') {
+      const auth = request.headers.get('Authorization');
+      if (!auth) {
+        return new Response('Not Found', { status: 404 });
+      }
+      const target = new URL('/stats' + url.search, COUNTER);
+      return fetch(target, request);
+    }
+
     // Redirect apex to www
     if (hostname === 'chenxiuniverse.top') {
       const www = new URL(url.pathname + url.search, 'https://www.chenxiuniverse.top');

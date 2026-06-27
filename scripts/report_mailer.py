@@ -132,7 +132,7 @@ def read_stats(since_days: int = 7) -> dict:
 
 # ─── 流量统计 ───
 
-COUNTER_URL = "https://counter.m20081225.workers.dev"
+COUNTER_URL = "https://www.chenxiuniverse.top/_report_stats"
 
 
 def get_traffic_stats(days: int = 7) -> dict:
