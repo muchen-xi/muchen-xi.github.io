@@ -27,8 +27,10 @@ jobs:
       - name: 检查主站健康
         id: check
         run: |
-          # 修复: 不用 || echo "000" 避免 double-output 导致数值比较失败
+          # set +e 防止 curl SSL 错误触发 bash errexit
+          set +e
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null)
+          set -e
           STATUS=${STATUS:-000}
           echo "status=$STATUS" >> $GITHUB_OUTPUT
           echo "主站状态码: $STATUS"
