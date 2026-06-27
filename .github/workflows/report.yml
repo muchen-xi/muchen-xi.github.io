@@ -49,6 +49,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_SENDER_NAME: ${{ secrets.SMTP_SENDER_NAME }}
           REPORT_TO: ${{ secrets.REPORT_TO }}
+          COUNTER_SHARED_SECRET: ${{ secrets.COUNTER_SHARED_SECRET }}
         continue-on-error: true
 
       - name: 上传报告（备份）

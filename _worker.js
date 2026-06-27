@@ -7,10 +7,13 @@ export default {
     const url = new URL(request.url);
     const hostname = url.hostname;
 
-    // ── PV 计数器代理 ──
-    if (url.pathname === '/ping' || url.pathname === '/stats') {
+    // ── PV 计数器代理 (/ping 公开, /stats 不代理) ──
+    if (url.pathname === '/ping') {
       const target = new URL(url.pathname + url.search, COUNTER);
       return fetch(target, request);
+    }
+    if (url.pathname === '/stats') {
+      return new Response('Not Found', { status: 404 });
     }
 
     // Redirect apex to www

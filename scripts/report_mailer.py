@@ -136,10 +136,13 @@ COUNTER_URL = "https://counter.m20081225.workers.dev"
 
 
 def get_traffic_stats(days: int = 7) -> dict:
-    """从 counter Worker 获取页面访问量"""
+    """从 counter Worker 获取页面访问量 (需认证)"""
     try:
+        shared_secret = os.environ.get("COUNTER_SHARED_SECRET", "")
         url = f"{COUNTER_URL}/stats?days={days}&sites=www,pimanager"
         req = urllib.request.Request(url)
+        if shared_secret:
+            req.add_header("Authorization", f"Bearer {shared_secret}")
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
