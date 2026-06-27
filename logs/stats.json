@@ -4,5 +4,11 @@
     "checks_failed": 0,
     "backup_count": 6,
     "restore_count": 1
+  },
+  "2026-06-27": {
+    "checks_total": 1,
+    "checks_failed": 0,
+    "backup_count": 1,
+    "restore_count": 0
   }
 }
