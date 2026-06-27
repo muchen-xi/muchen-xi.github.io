@@ -70,6 +70,70 @@ header h1{
   background-clip:text;
 }
 header .subtitle{font-size:clamp(.85rem,1.5vw,1rem);color:#8888aa;margin-top:8px;letter-spacing:1px}
+/* ===== Stats Dashboard ===== */
+.stats-grid{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:14px;
+  max-width:940px;
+  margin:0 auto 10px;
+  padding:0 20px;
+  position:relative;z-index:1;
+}
+.stat-card{
+  background:#12122a;
+  border:1px solid rgba(108,140,255,.18);
+  border-radius:12px;
+  padding:18px 14px 16px;
+  text-align:center;
+  position:relative;
+  overflow:hidden;
+  transition:border-color .3s,box-shadow .3s,transform .2s;
+  animation:fadeInUp .5s ease-out both;
+}
+.stat-card:nth-child(2){animation-delay:.06s}
+.stat-card:nth-child(3){animation-delay:.12s}
+.stat-card:nth-child(4){animation-delay:.18s}
+.stat-card:nth-child(5){animation-delay:.24s}
+.stat-card:hover{
+  border-color:rgba(160,108,255,.45);
+  box-shadow:0 4px 24px rgba(108,140,255,.12);
+  transform:translateY(-2px);
+}
+.stat-card::before{
+  content:'';
+  position:absolute;top:0;left:12px;right:12px;
+  height:1px;
+  background:linear-gradient(90deg,transparent,rgba(108,140,255,.5),transparent);
+}
+.stat-card .stat-icon{
+  font-size:1.6rem;
+  margin-bottom:6px;
+  display:block;
+}
+.stat-card .stat-icon.g1{background:linear-gradient(135deg,#6c8cff,#a06cff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.stat-card .stat-icon.g2{background:linear-gradient(135deg,#4facfe,#00f2fe);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.stat-card .stat-icon.g3{background:linear-gradient(135deg,#f093fb,#f5576c);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.stat-card .stat-icon.g4{background:linear-gradient(135deg,#a18cd1,#fbc2eb);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.stat-card .stat-icon.g5{background:linear-gradient(135deg,#43e97b,#38f9d7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.stat-card .stat-num{
+  font-size:clamp(1.5rem,2.5vw,2rem);
+  font-weight:800;
+  color:#e0e0f0;
+  letter-spacing:1px;
+  line-height:1.2;
+}
+.stat-card .stat-label{
+  font-size:.72rem;
+  color:#7777aa;
+  margin-top:4px;
+  letter-spacing:.5px;
+}
+.stat-card .stat-sub{
+  font-size:.65rem;
+  color:#555577;
+  margin-top:2px;
+}
 /* Section divider */
 .section-title{
   text-align:center;font-size:.85rem;color:#666688;letter-spacing:2px;
@@ -94,7 +158,7 @@ header .subtitle{font-size:clamp(.85rem,1.5vw,1rem);color:#8888aa;margin-top:8px
 .timeline-item .time-hash{font-size:.7rem;color:#555577;font-family:monospace;margin-top:2px}
 /* Milestone */
 .timeline-item.milestone::before{
-  content:'★';left:-28px;top:2px;width:auto;height:auto;
+  content:'\2605';left:-28px;top:2px;width:auto;height:auto;
   background:none;border:none;border-radius:0;
   color:#a06cff;font-size:16px;line-height:1;
   box-shadow:0 0 12px rgba(160,108,255,.5);
@@ -126,14 +190,27 @@ footer a:hover{color:#a0a0ff}
 .timeline-item:nth-child(5){animation-delay:.16s}
 .timeline-item:nth-child(6){animation-delay:.20s}
 /* Responsive */
+@media(max-width:900px){
+  .stats-grid{grid-template-columns:repeat(3,1fr);gap:10px}
+}
 @media(max-width:768px){
   header{padding:28px 16px}
   header h1{font-size:1.5rem;letter-spacing:1px}
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:8px;padding:0 12px}
+  .stat-card{padding:14px 10px 12px}
+  .stat-card .stat-num{font-size:1.3rem}
+  .stat-card .stat-label{font-size:.68rem}
   .timeline{padding-left:24px}
   .timeline::before{left:8px}
   .timeline-item{padding-left:18px;margin-bottom:22px}
   .timeline-item::before{left:-18px;width:8px;height:8px}
   .timeline-item.milestone::before{left:-21px;font-size:14px}
+}
+@media(max-width:420px){
+  .stats-grid{grid-template-columns:1fr 1fr;gap:6px;padding:0 8px}
+  .stat-card{padding:10px 8px 10px}
+  .stat-card .stat-icon{font-size:1.2rem}
+  .stat-card .stat-num{font-size:1.1rem}
 }
 </style>
 </head>
@@ -143,48 +220,94 @@ footer a:hover{color:#a0a0ff}
   <p class="subtitle">Evolution of chenxiuniverse.top</p>
 </header>
 
-<div class="section-title">★ 里程碑</div>
+<!-- STATS_DASHBOARD -->
+<div class="stats-grid">
+  <div class="stat-card">
+    <span class="stat-icon g1">&#x1F4CA;</span>
+    <div class="stat-num">统计中</div>
+    <div class="stat-label">累计 PV</div>
+    <div class="stat-sub">等待 Counter API 数据</div>
+  </div>
+  <div class="stat-card">
+    <span class="stat-icon g2">&#x1F52C;</span>
+    <div class="stat-num">9</div>
+    <div class="stat-label">IP 优选次数</div>
+    <div class="stat-sub">自动优选 + 分线路更新</div>
+  </div>
+  <div class="stat-card">
+    <span class="stat-icon g3">&#x26A1;</span>
+    <div class="stat-num">12</div>
+    <div class="stat-label">容灾触发次数</div>
+    <div class="stat-sub">备份 7 次 · 恢复 5 次</div>
+  </div>
+  <div class="stat-card">
+    <span class="stat-icon g4">&#x1F4C5;</span>
+    <div class="stat-num">8</div>
+    <div class="stat-label">建站天数</div>
+    <div class="stat-sub">自 2026-06-19 立项</div>
+  </div>
+  <div class="stat-card">
+    <span class="stat-icon g5">&#x1F4DD;</span>
+    <div class="stat-num">78</div>
+    <div class="stat-label">Git 提交</div>
+    <div class="stat-sub">累计 commits</div>
+  </div>
+</div>
+
+<div class="section-title">\2605 里程碑</div>
 <div class="timeline">
 <!-- MILESTONES_START -->
 <div class="timeline-item milestone">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">⚡ 容灾体系建立</div>
+  <div class="time-title">\26A1 容灾体系建立</div>
   <div class="time-desc">GitHub Actions 每5分钟健康检查 + DNS自动切备站/恢复 + CF Worker网关 + Pages备胎，零成本实现高可用</div>
 </div>
 <div class="timeline-item milestone">
   <div class="time-label">2026-06-26</div>
-  <div class="time-title">🔬 CF优选IP实验启动</div>
+  <div class="time-title">\1F52C CF优选IP实验启动</div>
   <div class="time-desc">ChinaSpeedTest境内测速 + OverseaSpeedTest境外测速 + 分线路DNS自动更新，实现全球访问加速</div>
 </div>
 <div class="timeline-item milestone">
   <div class="time-label">2026-06-19</div>
-  <div class="time-title">📡 PiManager v2 上线</div>
+  <div class="time-title">\1F4E1 PiManager v2 上线</div>
   <div class="time-desc">从 CustomTkinter 到自建 Pillow UI 库 pillui，MIT 开源 + 独立下载站 pimanager.chenxiuniverse.top</div>
 </div>
 <div class="timeline-item milestone">
   <div class="time-label">2026-06-19</div>
-  <div class="time-title">☁️ Cloudflare 迁移</div>
+  <div class="time-title">\2601 Cloudflare 迁移</div>
   <div class="time-desc">从 GitHub Pages 迁移至 CF Pages Account B (248200-xyz)，_worker.js 统一网关 + Workers 后端</div>
 </div>
 <div class="timeline-item milestone">
   <div class="time-label">2026-06-09</div>
-  <div class="time-title">🌐 首次部署 + 域名注册</div>
+  <div class="time-title">\1F310 首次部署 + 域名注册</div>
   <div class="time-desc">muchen-xi.github.io 首次部署 GitHub Pages，注册 chenxiuniverse.top 域名</div>
 </div>
 <div class="timeline-item milestone">
   <div class="time-label">2026-06-09</div>
-  <div class="time-title">🚀 项目立项</div>
+  <div class="time-title">\1F680 项目立项</div>
   <div class="time-desc">晨曦的宇宙个人主页项目启动，目标打造技术博客 + 项目展示 + 下载站的个人品牌网站</div>
 </div>
 <!-- MILESTONES_END -->
 </div>
-<div class="section-title">📜 Git 提交历史</div>
+<div class="section-title">\1F4DC Git 提交历史</div>
 <div class="timeline">
+<div class="timeline-item">
+  <div class="time-label">2026-06-27</div>
+  <div class="time-title">📅 进化史升级: PV/优选IP/容灾统计数据仪表盘</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">eade14f</div>
+</div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
   <div class="time-title">fix: health_check 去 Worker 化 — 直接 HTTPS 验证回源</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">a39ca31</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-27</div>
+  <div class="time-title">📅 网页进化史: GitHub Action 自动生成 + 静态页面</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">b27f875</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
@@ -233,6 +356,12 @@ footer a:hover{color:#a0a0ff}
   <div class="time-title">🎨 免责声明美化: 卡片布局 + 左侧强调线 + 响应式</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">a979550</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-27</div>
+  <div class="time-title">📝 更新pimanager免责声明: 5条→7条 (新增高危场景禁用+衍生作品责任隔离)</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">ec91884</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
@@ -312,28 +441,16 @@ footer a:hover{color:#a0a0ff}
   <div class="time-desc">by m2008</div>
   <div class="time-hash">546fc69</div>
 </div>
-<div class="timeline-item">
-  <div class="time-label">2026-06-26</div>
-  <div class="time-title">fix: SDK参数名 — rr_keyword→rrkey_word, type_keyword→type_key_word (aliyun-sdk v4.4.1)</div>
-  <div class="time-desc">by m2008</div>
-  <div class="time-hash">2ae44b4</div>
-</div>
-<div class="timeline-item">
-  <div class="time-label">2026-06-26</div>
-  <div class="time-title">feat: CF优选IP智能自动化 v2 — 分线路优化 + 境内测速 + 容灾修复</div>
-  <div class="time-desc">by m2008</div>
-  <div class="time-hash">52664a4</div>
-</div>
 </div>
 
 <div class="stats-bar">
   <span>里程碑: <span class="num">6</span></span>
-  <span>提交记录: <span class="num">24</span></span>
+  <span>提交记录: <span class="num">25</span></span>
 </div>
 
 <footer>
-  <p>自动生成于 2026-06-27 18:10:03 CST · <a href="https://github.com/muchen-xi/muchen-xi.github.io">GitHub</a></p>
-  <p style="margin-top:4px">Powered by GitHub Actions · chenxiuniverse.top</p>
+  <p>自动生成于 2026-06-27 18:14:20 CST · <a href="https://github.com/muchen-xi/muchen-xi.github.io">GitHub</a></p>
+  <p style="margin-top:4px">数据来源: Counter API · 本地日志 · Git History · Powered by GitHub Actions</p>
 </footer>
 </body>
 </html>
