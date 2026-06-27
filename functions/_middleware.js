@@ -6,13 +6,6 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const hostname = url.hostname;
 
-  // DIAGNOSTIC: test path on history/health
-  if (url.pathname === '/_diag') {
-    return new Response(`hostname=${hostname}`, {
-      headers: { 'Content-Type': 'text/plain' },
-    });
-  }
-
   // PV counter proxy
   if (url.pathname === '/ping') {
     return fetch(COUNTER + url.pathname + url.search);
@@ -33,21 +26,19 @@ export async function onRequest(context) {
     return Response.redirect('https://www.chenxiuniverse.top' + url.pathname + url.search, 301);
   }
 
+  // pimanager subdomain → /pimanager/ content
+  if (hostname === 'pimanager.chenxiuniverse.top') {
+    return context.env.ASSETS.fetch(new URL('/pimanager' + url.pathname, url.origin).toString());
+  }
+
   // history subdomain → evolution page
   if (hostname === 'history.chenxiuniverse.top') {
-    const newUrl = new URL('/evolution.html', url.origin);
-    return context.env.ASSETS.fetch(newUrl.toString());
+    return context.env.ASSETS.fetch(new URL('/evolution.html', url.origin).toString());
   }
 
   // health subdomain → health page
   if (hostname === 'health.chenxiuniverse.top') {
-    const newUrl = new URL('/health.html', url.origin);
-    return context.env.ASSETS.fetch(newUrl.toString());
-  }
-
-  // pimanager subdomain → /pimanager/ content
-  if (hostname === 'pimanager.chenxiuniverse.top') {
-    return context.env.ASSETS.fetch(new URL('/pimanager' + url.pathname, url.origin).toString());
+    return context.env.ASSETS.fetch(new URL('/health.html', url.origin).toString());
   }
 
   return next();
