@@ -61,9 +61,9 @@ FALLBACK_CF_IPS = [
 STATE_FILE = Path(__file__).resolve().parent.parent / ".failover_state.json"
 
 # 需要容灾的子域（仅 default 线路，oversea 不动）
-# 注: pimanager 使用 CNAME 架构，不走 A 记录容灾
 FAILOVER_TARGETS = [
     {"rr": "www", "line": "default"},
+    {"rr": "pimanager", "line": "default"},
 ]
 
 
