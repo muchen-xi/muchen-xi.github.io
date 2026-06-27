@@ -16,6 +16,62 @@ jobs:
         with:
           fetch-depth: 0  # 完整 git 历史
 
+      - name: Collect stats data
+        run: |
+          # 获取 PV 数据（如果失败则设为 N/A）
+          PV_JSON=$(curl -s --max-time 15 "https://www.chenxiuniverse.top/_report_stats?days=30&sites=www" \
+            -H "Authorization: Bearer ${{ secrets.COUNTER_SHARED_SECRET }}" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            2>/dev/null || echo '{}')
+
+          # 尝试解析总PV（JSON 或 HTML 均可能返回）
+          PV_TOTAL=$(echo "$PV_JSON" | python3 -c "
+          import sys,json
+          try:
+            data=json.load(sys.stdin)
+            total=0
+            if isinstance(data,dict):
+              for v in data.values():
+                if isinstance(v,(int,float)): total+=v
+                elif isinstance(v,dict):
+                  for vv in v.values():
+                    if isinstance(vv,(int,float)): total+=vv
+            print(total) if total>0 else print('N/A')
+          except: print('N/A')
+          " 2>/dev/null || echo 'N/A')
+
+          echo "PV_TOTAL=$PV_TOTAL" >> $GITHUB_ENV
+
+          # 统计 IP 优选次数
+          IP_COUNT=$(ls logs/events/*ip_update*.json 2>/dev/null | wc -l || echo 0)
+          echo "IP_COUNT=$IP_COUNT" >> $GITHUB_ENV
+
+          # 统计容灾次数 (backup_count + restore_count)
+          FAILOVER_COUNT=$(python3 -c "
+          import json, os
+          total_b = 0
+          total_r = 0
+          if os.path.exists('logs/stats.json'):
+              stats = json.load(open('logs/stats.json'))
+              for d in stats.values():
+                  total_b += d.get('backup_count', 0)
+                  total_r += d.get('restore_count', 0)
+          print(f'{total_b+total_r}|{total_b}|{total_r}')
+          " 2>/dev/null || echo '0|0|0')
+          echo "FAILOVER_COUNT=$(echo $FAILOVER_COUNT | cut -d'|' -f1)" >> $GITHUB_ENV
+          echo "BACKUP_COUNT=$(echo $FAILOVER_COUNT | cut -d'|' -f2)" >> $GITHUB_ENV
+          echo "RESTORE_COUNT=$(echo $FAILOVER_COUNT | cut -d'|' -f3)" >> $GITHUB_ENV
+
+          # 建站天数 (从 2026-06-19 算起)
+          DAYS_SINCE=$(( ($(date +%s) - $(date -d '2026-06-19' +%s)) / 86400 ))
+          echo "DAYS_SINCE=$DAYS_SINCE" >> $GITHUB_ENV
+
+          # Git 提交总数
+          COMMIT_TOTAL=$(git rev-list --count HEAD)
+          echo "COMMIT_TOTAL=$COMMIT_TOTAL" >> $GITHUB_ENV
+
+          echo "📊 数据采集完成: PV=$PV_TOTAL IP=$IP_COUNT 容灾=$FAILOVER_COUNT 建站=${DAYS_SINCE}天 提交=$COMMIT_TOTAL"
+
       - name: Generate evolution.html
         run: |
           cat > evolution.html << 'HTMLEOF'
@@ -91,6 +147,70 @@ jobs:
             background-clip:text;
           }
           header .subtitle{font-size:clamp(.85rem,1.5vw,1rem);color:#8888aa;margin-top:8px;letter-spacing:1px}
+          /* ===== Stats Dashboard ===== */
+          .stats-grid{
+            display:grid;
+            grid-template-columns:repeat(5,1fr);
+            gap:14px;
+            max-width:940px;
+            margin:0 auto 10px;
+            padding:0 20px;
+            position:relative;z-index:1;
+          }
+          .stat-card{
+            background:#12122a;
+            border:1px solid rgba(108,140,255,.18);
+            border-radius:12px;
+            padding:18px 14px 16px;
+            text-align:center;
+            position:relative;
+            overflow:hidden;
+            transition:border-color .3s,box-shadow .3s,transform .2s;
+            animation:fadeInUp .5s ease-out both;
+          }
+          .stat-card:nth-child(2){animation-delay:.06s}
+          .stat-card:nth-child(3){animation-delay:.12s}
+          .stat-card:nth-child(4){animation-delay:.18s}
+          .stat-card:nth-child(5){animation-delay:.24s}
+          .stat-card:hover{
+            border-color:rgba(160,108,255,.45);
+            box-shadow:0 4px 24px rgba(108,140,255,.12);
+            transform:translateY(-2px);
+          }
+          .stat-card::before{
+            content:'';
+            position:absolute;top:0;left:12px;right:12px;
+            height:1px;
+            background:linear-gradient(90deg,transparent,rgba(108,140,255,.5),transparent);
+          }
+          .stat-card .stat-icon{
+            font-size:1.6rem;
+            margin-bottom:6px;
+            display:block;
+          }
+          .stat-card .stat-icon.g1{background:linear-gradient(135deg,#6c8cff,#a06cff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-icon.g2{background:linear-gradient(135deg,#4facfe,#00f2fe);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-icon.g3{background:linear-gradient(135deg,#f093fb,#f5576c);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-icon.g4{background:linear-gradient(135deg,#a18cd1,#fbc2eb);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-icon.g5{background:linear-gradient(135deg,#43e97b,#38f9d7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-num{
+            font-size:clamp(1.5rem,2.5vw,2rem);
+            font-weight:800;
+            color:#e0e0f0;
+            letter-spacing:1px;
+            line-height:1.2;
+          }
+          .stat-card .stat-label{
+            font-size:.72rem;
+            color:#7777aa;
+            margin-top:4px;
+            letter-spacing:.5px;
+          }
+          .stat-card .stat-sub{
+            font-size:.65rem;
+            color:#555577;
+            margin-top:2px;
+          }
           /* Section divider */
           .section-title{
             text-align:center;font-size:.85rem;color:#666688;letter-spacing:2px;
@@ -115,7 +235,7 @@ jobs:
           .timeline-item .time-hash{font-size:.7rem;color:#555577;font-family:monospace;margin-top:2px}
           /* Milestone */
           .timeline-item.milestone::before{
-            content:'★';left:-28px;top:2px;width:auto;height:auto;
+            content:'\2605';left:-28px;top:2px;width:auto;height:auto;
             background:none;border:none;border-radius:0;
             color:#a06cff;font-size:16px;line-height:1;
             box-shadow:0 0 12px rgba(160,108,255,.5);
@@ -147,14 +267,27 @@ jobs:
           .timeline-item:nth-child(5){animation-delay:.16s}
           .timeline-item:nth-child(6){animation-delay:.20s}
           /* Responsive */
+          @media(max-width:900px){
+            .stats-grid{grid-template-columns:repeat(3,1fr);gap:10px}
+          }
           @media(max-width:768px){
             header{padding:28px 16px}
             header h1{font-size:1.5rem;letter-spacing:1px}
+            .stats-grid{grid-template-columns:repeat(2,1fr);gap:8px;padding:0 12px}
+            .stat-card{padding:14px 10px 12px}
+            .stat-card .stat-num{font-size:1.3rem}
+            .stat-card .stat-label{font-size:.68rem}
             .timeline{padding-left:24px}
             .timeline::before{left:8px}
             .timeline-item{padding-left:18px;margin-bottom:22px}
             .timeline-item::before{left:-18px;width:8px;height:8px}
             .timeline-item.milestone::before{left:-21px;font-size:14px}
+          }
+          @media(max-width:420px){
+            .stats-grid{grid-template-columns:1fr 1fr;gap:6px;padding:0 8px}
+            .stat-card{padding:10px 8px 10px}
+            .stat-card .stat-icon{font-size:1.2rem}
+            .stat-card .stat-num{font-size:1.1rem}
           }
           </style>
           </head>
@@ -164,42 +297,100 @@ jobs:
             <p class="subtitle">Evolution of chenxiuniverse.top</p>
           </header>
 
-          <div class="section-title">★ 里程碑</div>
+          <!-- STATS_DASHBOARD -->
+          HTMLEOF
+
+          # --- 注入统计卡片（使用环境变量） ---
+          PV_DISPLAY="${PV_TOTAL:-统计中}"
+          IP_DISPLAY="${IP_COUNT:-0}"
+          FO_DISPLAY="${FAILOVER_COUNT:-0}"
+          BK_DISPLAY="${BACKUP_COUNT:-0}"
+          RE_DISPLAY="${RESTORE_COUNT:-0}"
+          DAYS_DISPLAY="${DAYS_SINCE:-1}"
+          CT_DISPLAY="${COMMIT_TOTAL:-0}"
+
+          # 格式化 PV (数字千分位)
+          if [ "$PV_DISPLAY" != "统计中" ] && [ "$PV_DISPLAY" != "N/A" ]; then
+            PV_FMT=$(printf "%'d" "$PV_DISPLAY" 2>/dev/null || echo "$PV_DISPLAY")
+            PV_SUB="30天 · www 站点"
+          else
+            PV_FMT="统计中"
+            PV_SUB="等待 Counter API 数据"
+          fi
+
+          cat >> evolution.html << STATSEOF
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-icon g1">&#x1F4CA;</span>
+              <div class="stat-num">${PV_FMT}</div>
+              <div class="stat-label">累计 PV</div>
+              <div class="stat-sub">${PV_SUB}</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon g2">&#x1F52C;</span>
+              <div class="stat-num">${IP_DISPLAY}</div>
+              <div class="stat-label">IP 优选次数</div>
+              <div class="stat-sub">自动优选 + 分线路更新</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon g3">&#x26A1;</span>
+              <div class="stat-num">${FO_DISPLAY}</div>
+              <div class="stat-label">容灾触发次数</div>
+              <div class="stat-sub">备份 ${BK_DISPLAY} 次 · 恢复 ${RE_DISPLAY} 次</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon g4">&#x1F4C5;</span>
+              <div class="stat-num">${DAYS_DISPLAY}</div>
+              <div class="stat-label">建站天数</div>
+              <div class="stat-sub">自 2026-06-19 立项</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon g5">&#x1F4DD;</span>
+              <div class="stat-num">${CT_DISPLAY}</div>
+              <div class="stat-label">Git 提交</div>
+              <div class="stat-sub">累计 commits</div>
+            </div>
+          </div>
+          STATSEOF
+
+          # --- 继续输出里程碑和 git 历史 ---
+          cat >> evolution.html << 'HTMLEOF'
+
+          <div class="section-title">\2605 里程碑</div>
           <div class="timeline">
           <!-- MILESTONES_START -->
           HTMLEOF
 
           # --- 硬编码里程碑 ---
-          # 使用 cat 追加每个里程碑
           cat >> evolution.html << 'HTMLEOF'
           <div class="timeline-item milestone">
             <div class="time-label">2026-06-27</div>
-            <div class="time-title">⚡ 容灾体系建立</div>
+            <div class="time-title">\26A1 容灾体系建立</div>
             <div class="time-desc">GitHub Actions 每5分钟健康检查 + DNS自动切备站/恢复 + CF Worker网关 + Pages备胎，零成本实现高可用</div>
           </div>
           <div class="timeline-item milestone">
             <div class="time-label">2026-06-26</div>
-            <div class="time-title">🔬 CF优选IP实验启动</div>
+            <div class="time-title">\1F52C CF优选IP实验启动</div>
             <div class="time-desc">ChinaSpeedTest境内测速 + OverseaSpeedTest境外测速 + 分线路DNS自动更新，实现全球访问加速</div>
           </div>
           <div class="timeline-item milestone">
             <div class="time-label">2026-06-19</div>
-            <div class="time-title">📡 PiManager v2 上线</div>
+            <div class="time-title">\1F4E1 PiManager v2 上线</div>
             <div class="time-desc">从 CustomTkinter 到自建 Pillow UI 库 pillui，MIT 开源 + 独立下载站 pimanager.chenxiuniverse.top</div>
           </div>
           <div class="timeline-item milestone">
             <div class="time-label">2026-06-19</div>
-            <div class="time-title">☁️ Cloudflare 迁移</div>
+            <div class="time-title">\2601 Cloudflare 迁移</div>
             <div class="time-desc">从 GitHub Pages 迁移至 CF Pages Account B (248200-xyz)，_worker.js 统一网关 + Workers 后端</div>
           </div>
           <div class="timeline-item milestone">
             <div class="time-label">2026-06-09</div>
-            <div class="time-title">🌐 首次部署 + 域名注册</div>
+            <div class="time-title">\1F310 首次部署 + 域名注册</div>
             <div class="time-desc">muchen-xi.github.io 首次部署 GitHub Pages，注册 chenxiuniverse.top 域名</div>
           </div>
           <div class="timeline-item milestone">
             <div class="time-label">2026-06-09</div>
-            <div class="time-title">🚀 项目立项</div>
+            <div class="time-title">\1F680 项目立项</div>
             <div class="time-desc">晨曦的宇宙个人主页项目启动，目标打造技术博客 + 项目展示 + 下载站的个人品牌网站</div>
           </div>
           <!-- MILESTONES_END -->
@@ -208,7 +399,7 @@ jobs:
           # --- 分隔线 ---
           cat >> evolution.html << 'HTMLEOF'
           </div>
-          <div class="section-title">📜 Git 提交历史</div>
+          <div class="section-title">\1F4DC Git 提交历史</div>
           <div class="timeline">
           HTMLEOF
 
@@ -216,15 +407,13 @@ jobs:
           GIT_LOG=$(git log --format="%H|%ai|%s|%an" -50)
           COMMIT_COUNT=0
           while IFS='|' read -r hash date msg author; do
-            # 跳过自动提交（包含 📝 📊 📅 或 github-actions bot）
+            # 跳过自动提交（包含 github-actions bot 或 emoji 标记的自动提交）
             echo "$author" | grep -q "github-actions" && continue
-            echo "$msg" | grep -qE '(📝|📊|📅)' && continue
+            echo "$msg" | grep -qE '(\1F4DD|\1F4CA|\1F4C5)' && continue
 
             COMMIT_COUNT=$((COMMIT_COUNT + 1))
-            # 格式化日期
             DATE_FMT=$(echo "$date" | cut -d' ' -f1)
             SHORT_HASH=$(echo "$hash" | cut -c1-7)
-            # HTML 转义摘要（防 XSS）
             SAFE_MSG=$(echo "$msg" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')
             SAFE_AUTHOR=$(echo "$author" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')
 
@@ -252,18 +441,18 @@ jobs:
 
           <footer>
             <p>自动生成于 ${GENERATED_AT} · <a href="https://github.com/muchen-xi/muchen-xi.github.io">GitHub</a></p>
-            <p style="margin-top:4px">Powered by GitHub Actions · chenxiuniverse.top</p>
+            <p style="margin-top:4px">数据来源: Counter API · 本地日志 · Git History · Powered by GitHub Actions</p>
           </footer>
           </body>
           </html>
           HTMLEOF
 
-          echo "✅ evolution.html 生成完毕 (${COMMIT_COUNT} 条提交记录)"
+          echo "✅ evolution.html 生成完毕 (${COMMIT_COUNT} 条提交记录, PV=${PV_DISPLAY}, IP=${IP_DISPLAY}, 容灾=${FO_DISPLAY})"
 
       - name: Commit evolution.html
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add evolution.html
-          git diff --staged --quiet || git commit -m "📅 更新网页进化史 [skip ci]"
+          git diff --staged --quiet || git commit -m "\1F4C5 更新网页进化史 [skip ci]"
           git push
