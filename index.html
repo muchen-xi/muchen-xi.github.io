@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self'; connect-src 'self' https://www.chenxiuniverse.top; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self'; connect-src 'self' https://www.chenxiuniverse.top https://api.open-meteo.com https://ipinfo.io https://nominatim.openstreetmap.org https://ip-api.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <title>晨曦的宇宙</title>
   <script>if(location.hostname==='chenxiuniverse.top')location.replace('https://www.chenxiuniverse.top'+location.pathname+location.search)</script>
   <style>
@@ -680,7 +680,7 @@
     CI.forEach(function(c){var b=document.createElement('button');b.className='cbtn';b.textContent=c.n;b.addEventListener('click',function(){po=false;cp.classList.remove('op');localStorage.setItem('wc',JSON.stringify({n:c.n,la:c.la,lo:c.lo}));fu(c.la,c.lo,c.n);});cg.appendChild(b);});
     document.getElementById('lb').addEventListener('click',function(){po=!po;cp.classList.toggle('op',po);});
     (async function(){var sv=localStorage.getItem('wc');if(sv){try{var c=JSON.parse(sv);EL.lb.textContent=c.n;fu(c.la,c.lo,c.n);return}catch(e){}}
-      try{var r1=await fetch('http://ip-api.com/json/?fields=city,lat,lon'),d1=await r1.json();if(d1&&d1.city){EL.lb.textContent=d1.city;fu(d1.lat,d1.lon,d1.city)}else throw Error()}catch(e){
+      try{var r1=await fetch('https://ip-api.com/json/?fields=city,lat,lon'),d1=await r1.json();if(d1&&d1.city){EL.lb.textContent=d1.city;fu(d1.lat,d1.lon,d1.city)}else throw Error()}catch(e){
         try{var r2=await fetch('https://ipinfo.io/json'),d2=await r2.json();EL.lb.textContent=d2.city||'未知';var cr=d2.loc.split(',');fu(parseFloat(cr[0]),parseFloat(cr[1]),d2.city)}catch(e2){EL.lb.textContent='定位失败';EL.ad.textContent='点击城市名手动选择';}}
       if('geolocation'in navigator){navigator.geolocation.getCurrentPosition(function(pos){
         fetch('https://nominatim.openstreetmap.org/reverse?lat='+pos.coords.latitude+'&lon='+pos.coords.longitude+'&format=json&accept-language=zh')
