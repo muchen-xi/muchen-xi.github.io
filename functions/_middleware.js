@@ -31,14 +31,16 @@ export async function onRequest(context) {
     return context.env.ASSETS.fetch(new URL('/pimanager' + url.pathname, url.origin).toString());
   }
 
-  // history subdomain → /evolution page
+  // history subdomain → evolution page
   if (hostname === 'history.chenxiuniverse.top') {
-    return context.env.ASSETS.fetch(new URL('/evolution.html', url.origin).toString());
+    const newUrl = new URL('/evolution.html', url.origin);
+    return context.env.ASSETS.fetch(newUrl.toString());
   }
 
-  // health subdomain → /health page
+  // health subdomain → health page
   if (hostname === 'health.chenxiuniverse.top') {
-    return context.env.ASSETS.fetch(new URL('/health.html', url.origin).toString());
+    const newUrl = new URL('/health.html', url.origin);
+    return context.env.ASSETS.fetch(newUrl.toString());
   }
 
   return next();
