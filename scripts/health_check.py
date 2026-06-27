@@ -146,9 +146,19 @@ def main():
 
     # 3. 排序输出
     valid.sort(key=lambda x: x["latency_ms"])
-    print(f"\n有效 IP: {len(valid)}/{len(candidate_ips)}")
+    valid_count = len(valid)
+    print(f"\n有效 IP: {valid_count}/{len(candidate_ips)}")
 
-    # 4. 写入 CSV（兼容 CloudflareST 格式）
+    # 4. 阈值判断：阻断坏 IP 部署
+    if valid_count == 0:
+        print("❌ 健康验证失败: 所有IP均不可达，阻断部署", file=sys.stderr)
+        sys.exit(1)
+    elif valid_count == 1:
+        print(f"⚠️ 仅 {valid_count} 个IP通过验证，不足以冗余部署", file=sys.stderr)
+    else:
+        print(f"✅ {valid_count} 个IP通过健康验证")
+
+    # 5. 写入 CSV（兼容 CloudflareST 格式）
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
         f.write(CSV_HEADER + "\n")
         for r in valid:

@@ -90,9 +90,8 @@ jobs:
       - name: 安装阿里云SDK
         run: pip install alibabacloud_alidns20150109
 
-      - name: 健康验证（可选）
+      - name: 健康验证
         id: health
-        continue-on-error: true
         run: |
           if [ -f overseas-result/result.csv ]; then
             cp overseas-result/result.csv .
@@ -100,8 +99,18 @@ jobs:
           if [ -f china-result/china_result.csv ]; then
             cp china-result/china_result.csv .
           fi
-          python3 scripts/health_check.py result.csv --output valid_overseas.csv || true
-          python3 scripts/health_check.py china_result.csv --output valid_china.csv || true
+          set +e
+          python3 scripts/health_check.py result.csv valid_overseas.csv
+          OVERSEAS_OK=$?
+          python3 scripts/health_check.py china_result.csv valid_china.csv
+          CHINA_OK=$?
+          set -e
+          if [ $OVERSEAS_OK -ne 0 ] && [ $CHINA_OK -ne 0 ]; then
+            echo "::error::境外+境内健康验证全部失败，阻断部署"
+            exit 1
+          fi
+          if [ $OVERSEAS_OK -eq 0 ]; then echo "✅ 境外IP健康验证通过"; else echo "⚠️ 境外IP健康验证失败，跳过（境内可用）"; fi
+          if [ $CHINA_OK -eq 0 ]; then echo "✅ 境内IP健康验证通过"; else echo "⚠️ 境内IP健康验证失败，跳过（境外可用）"; fi
 
       - name: 更新 DNS（分线路）
         run: |
