@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PiManager — 树莓派桌面管理器</title>
+  <meta name="description" content="轻量级树莓派 SSH 管理工具，IP 漂移自动修复、流式终端、双栏文件管理。MIT 开源，Windows 一键安装。">
+  <link rel="icon" href="assets/icon.png" type="image/png">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<nav>
+  <a href="#" class="logo">
+    <img src="assets/icon.png" alt="PiManager">
+    PiManager
+  </a>
+  <div class="nav-links">
+    <a href="#features">功能</a>
+    <a href="#install">安装</a>
+    <a href="#disclaimer">免责</a>
+    <a href="https://chenxiuniverse.top" class="btn-ghost">Blog</a>
+    <a href="https://github.com/muchen-xi/Pimanager" class="btn-ghost">GitHub</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <img src="assets/icon.png" alt="PiManager" class="icon-lg">
+  <h1>PiManager</h1>
+  <p class="subtitle">轻量级树莓派桌面管理器 — SSH、文件、终端，一个窗口全搞定</p>
+  <p class="version-badge">v2.2.2 · MIT License · 作者 晨曦</p>
+  <br>
+  <a href="#" class="btn-download" id="btn-download">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    下载 PiManager v2.2.2
+  </a>
+  <p class="download-meta">
+    Windows 安装包 · 32 MB · 支持 Windows 10/11
+    <br>下载即表示您已阅读并同意 <a href="#disclaimer">免责声明</a>
+    <br><a href="https://github.com/muchen-xi/Pimanager">或从 GitHub 获取源码</a>
+  </p>
+</section>
+
+<section class="features container" id="features">
+  <h2>功能</h2>
+  <p class="section-desc">自建 pillui 组件库，纯 Pillow Canvas 渲染，轻量高效</p>
+  <div class="feature-grid">
+    <div class="feature-card"><div class="fc-icon">🔑</div><h3>SSH 密钥连接</h3><p>基于 ed25519/RSA 密钥的安全连接，支持密码回退，自动管理 known_hosts。</p></div>
+    <div class="feature-card"><div class="fc-icon">🔄</div><h3>IP 漂移自动修复</h3><p>树莓派 DHCP 更换 IP 时自动重新解析主机名并重连，指数退避最多 3 次。</p></div>
+    <div class="feature-card"><div class="fc-icon">📊</div><h3>实时状态监控</h3><p>CPU、温度、内存、磁盘、运行时间、负载，侧边栏 + 详情双视图。</p></div>
+    <div class="feature-card"><div class="fc-icon">📁</div><h3>双栏文件管理器</h3><p>远程/本地双栏，上传、下载（含进度条）、删除、重命名、新建文件夹。</p></div>
+    <div class="feature-card"><div class="fc-icon">⚡</div><h3>远程执行</h3><p>右键运行 Python/Shell 脚本，结果实时返回或推送到终端。</p></div>
+    <div class="feature-card"><div class="fc-icon">💻</div><h3>流式命令终端</h3><p>多标签独立会话，流式/阻塞双模式，Ctrl+C 中断，命令历史。</p></div>
+    <div class="feature-card"><div class="fc-icon">🎨</div><h3>主题 &amp; 背景</h3><p>深色/浅色模式，绿/蓝/深蓝三色强调。任意图片背景，四种适配模式。</p></div>
+    <div class="feature-card"><div class="fc-icon">⚡</div><h3>快捷命令</h3><p>10 个预设命令一键发送到终端，提升操作效率。</p></div>
+    <div class="feature-card"><div class="fc-icon">🪶</div><h3>极致轻量</h3><p>原生桌面应用，pillui 自建组件库，Canvas 直接渲染，内存占用极低。</p></div>
+    <div class="feature-card"><div class="fc-icon">🔧</div><h3>开箱即用</h3><p>仅依赖 Python 3.9+、paramiko、Pillow，Windows 一键安装包，无需手动配置。</p></div>
+  </div>
+</section>
+
+<section class="install container" id="install">
+  <h2>三步安装</h2>
+  <div class="install-steps">
+    <div class="step"><div class="step-num">1</div><h3>下载安装包</h3><p>点击上方下载按钮，获取 PiManager-2.2.2-setup.exe（32 MB）。</p></div>
+    <div class="step"><div class="step-num">2</div><h3>运行安装程序</h3><p>双击安装包，按提示完成安装。自动创建桌面快捷方式。</p></div>
+    <div class="step"><div class="step-num">3</div><h3>连接树莓派</h3><p>输入主机名或 IP，选择 SSH 密钥（自动发现 ~/.ssh 目录），一键连接。</p><code>ssh-keygen -t ed25519 -C "pimanager"</code></div>
+  </div>
+</section>
+
+<section class="install container" id="disclaimer">
+  <h2>免责声明</h2>
+  <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:32px;font-size:14px;color:var(--text-secondary);line-height:2;max-width:900px;margin:0 auto;">
+    <p>PiManager（以下简称"本软件"）采用 <strong>MIT 许可证</strong> 开源发布。在您使用本软件前，请仔细阅读以下条款：</p>
+    <h4 style="color:var(--text-primary);margin-top:20px;">1. 按原样提供</h4>
+    <p>本软件按"AS IS"（现状）提供，不附带任何形式的明示或暗示担保，包括但不限于对适销性、特定用途适用性、安全性、稳定性及不侵权的保证。</p>
+    <h4 style="color:var(--text-primary);margin-top:16px;">2. 使用风险自担</h4>
+    <p>本软件涉及对被控端设备的 SSH 访问与控制，该操作可能影响设备系统稳定性、数据完整性及网络安全。您应自行评估并承担所有使用风险，包括但不限于因网络中断、配置错误、命令误操作、权限不足、兼容性问题或第三方依赖漏洞所导致的任何直接或间接损失。</p>
+    <h4 style="color:var(--text-primary);margin-top:16px;">3. 责任限制</h4>
+    <p>依据 MIT 协议条款，在任何情况下，本软件的作者、贡献者、维护团队及关联方均不对因使用或无法使用本软件而引发的任何索赔、损害（包括但不限于业务中断、数据丢失、设备损坏、利润损失）承担责任，即使已被告知此类损害的可能性。</p>
+    <h4 style="color:var(--text-primary);margin-top:16px;">4. 用户反馈</h4>
+    <p>我们欢迎并鼓励用户通过 GitHub Issues 提交反馈。提交 Issue 即视为您同意将相关信息（包括日志片段、配置信息等）授权用于软件改进，我们承诺不会将您的隐私数据用于其他目的或对外泄露。</p>
+    <h4 style="color:var(--text-primary);margin-top:16px;">5. 协议与法律</h4>
+    <p>本软件遵循 MIT 许可证的全部条款。本免责声明未尽事宜，以 MIT 协议为准；如有争议，适用中华人民共和国法律。</p>
+    <p style="color:var(--text-primary);margin-top:20px;"><strong>感谢使用 PiManager。</strong></p>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-content container">
+    <span>PiManager v2.2.2</span>
+    <span class="divider"></span>
+    <a href="https://github.com/muchen-xi/Pimanager/blob/main/LICENSE">MIT License</a>
+    <span class="divider"></span>
+    <a href="#disclaimer">免责声明</a>
+    <span class="divider"></span>
+    <span>作者 <a href="https://github.com/muchen-xi">晨曦 (Chenxi)</a></span>
+    <span class="divider"></span>
+    <a href="https://github.com/muchen-xi/Pimanager">GitHub</a>
+  </div>
+</footer>
+
+<script>
+document.getElementById('btn-download').addEventListener('click', function(e) {
+  this.href = 'https://github.com/muchen-xi/Pimanager/releases/download/v2.2.2/PiManager-2.2.2-setup.exe';
+});
+</script>
+</body>
+</html>
