@@ -36,11 +36,10 @@ TOP_N = 3  # 每条线路保留 N 个最优 IP
 TTL = 600
 
 # 需要管理的子域和线路
+# 注: pimanager 使用 CNAME 架构，不在 A 记录管理中
 TARGETS = [
     {"rr": "www", "line": "default", "csv": "china"},      # 国内 → 境内优选
     {"rr": "www", "line": "oversea", "csv": "overseas"},    # 境外 → 境外优选
-    {"rr": "pimanager", "line": "default", "csv": "china"},
-    {"rr": "pimanager", "line": "oversea", "csv": "overseas"},
 ]
 
 # RecordId 环境变量映射
