@@ -74,21 +74,23 @@ def main():
                 page = browser.new_page(viewport=VIEWPORT)
                 page.goto(URL, wait_until="networkidle", timeout=30000)
 
-                # 截图 + 缩放为缩略图
-                page.screenshot(path=str(today_path), type="webp", quality=60)
+                # 截图 (Playwright 只支持 png/jpeg)
+                tmp = str(today_path).replace('.webp', '.png')
+                page.screenshot(path=tmp, type="png")
                 browser.close()
 
-            # 生成缩略图 (Pillow 缩放)
+            # 转为 WebP 缩略图 (Pillow)
             try:
                 from PIL import Image
-
-                img = Image.open(today_path)
+                img = Image.open(tmp)
                 ratio = THUMB_WIDTH / img.width
                 thumb_h = int(img.height * ratio)
                 img = img.resize((THUMB_WIDTH, thumb_h), Image.LANCZOS)
                 img.save(today_path, "WEBP", quality=50)
+                os.remove(tmp)  # 删除原始 PNG
             except Exception:
-                pass  # Pillow 不可用时保留原始截图
+                import shutil
+                shutil.move(tmp, today_path)  # Pillow 不可用，用原始 PNG
 
             size_kb = today_path.stat().st_size / 1024
             print(f"  [ok] {TODAY}.webp ({size_kb:.0f}KB)")
