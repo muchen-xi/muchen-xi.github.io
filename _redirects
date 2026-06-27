@@ -1,0 +1,5 @@
+# 根域 → www 跳转
+https://chenxiuniverse.top/* https://www.chenxiuniverse.top/:splat 301
+
+# pimanager 子域 → /pimanager/ 内容
+https://pimanager.chenxiuniverse.top/* /pimanager/:splat 200
