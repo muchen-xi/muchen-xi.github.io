@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>晨曦的宇宙 · 网页进化史</title>
+<title>晨曦的宇宙 . 网页进化史</title>
 <style>
-/* ===== Space Theme — 完全自包含，与 space.css 同配色 ===== */
+/* ===== Space Theme ===== */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
 body{
@@ -70,6 +70,7 @@ header h1{
   background-clip:text;
 }
 header .subtitle{font-size:clamp(.85rem,1.5vw,1rem);color:#8888aa;margin-top:8px;letter-spacing:1px}
+
 /* ===== Stats Dashboard ===== */
 .stats-grid{
   display:grid;
@@ -100,6 +101,7 @@ header .subtitle{font-size:clamp(.85rem,1.5vw,1rem);color:#8888aa;margin-top:8px
   box-shadow:0 4px 24px rgba(108,140,255,.12);
   transform:translateY(-2px);
 }
+/* Glow line at top */
 .stat-card::before{
   content:'';
   position:absolute;top:0;left:12px;right:12px;
@@ -123,6 +125,7 @@ header .subtitle{font-size:clamp(.85rem,1.5vw,1rem);color:#8888aa;margin-top:8px
   letter-spacing:1px;
   line-height:1.2;
 }
+.stat-card .stat-num.pulse{color:#6c8cff}
 .stat-card .stat-label{
   font-size:.72rem;
   color:#7777aa;
@@ -220,17 +223,17 @@ footer a:hover{color:#a0a0ff}
   <p class="subtitle">Evolution of chenxiuniverse.top</p>
 </header>
 
-<!-- STATS_DASHBOARD -->
+<!-- ===== Stats Dashboard ===== -->
 <div class="stats-grid">
   <div class="stat-card">
     <span class="stat-icon g1">&#x1F4CA;</span>
     <div class="stat-num">统计中</div>
     <div class="stat-label">累计 PV</div>
-    <div class="stat-sub">等待 Counter API 数据</div>
+    <div class="stat-sub">30天 · www 站点</div>
   </div>
   <div class="stat-card">
     <span class="stat-icon g2">&#x1F52C;</span>
-    <div class="stat-num">10</div>
+    <div class="stat-num">9</div>
     <div class="stat-label">IP 优选次数</div>
     <div class="stat-sub">自动优选 + 分线路更新</div>
   </div>
@@ -248,7 +251,7 @@ footer a:hover{color:#a0a0ff}
   </div>
   <div class="stat-card">
     <span class="stat-icon g5">&#x1F4DD;</span>
-    <div class="stat-num">81</div>
+    <div class="stat-num">74</div>
     <div class="stat-label">Git 提交</div>
     <div class="stat-sub">累计 commits</div>
   </div>
@@ -256,7 +259,6 @@ footer a:hover{color:#a0a0ff}
 
 <div class="section-title">\2605 里程碑</div>
 <div class="timeline">
-<!-- MILESTONES_START -->
 <div class="timeline-item milestone">
   <div class="time-label">2026-06-27</div>
   <div class="time-title">\26A1 容灾体系建立</div>
@@ -287,97 +289,66 @@ footer a:hover{color:#a0a0ff}
   <div class="time-title">\1F680 项目立项</div>
   <div class="time-desc">晨曦的宇宙个人主页项目启动，目标打造技术博客 + 项目展示 + 下载站的个人品牌网站</div>
 </div>
-<!-- MILESTONES_END -->
 </div>
 <div class="section-title">\1F4DC Git 提交历史</div>
 <div class="timeline">
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">chore: 移除 cf-ip-optimize + failover-monitor 重复工作流</div>
-  <div class="time-desc">by m2008</div>
-  <div class="time-hash">cb27a32</div>
-</div>
-<div class="timeline-item">
-  <div class="time-label">2026-06-27</div>
-  <div class="time-title">📅 进化史升级: PV/优选IP/容灾统计数据仪表盘</div>
-  <div class="time-desc">by m2008</div>
-  <div class="time-hash">eade14f</div>
-</div>
-<div class="timeline-item">
-  <div class="time-label">2026-06-27</div>
-  <div class="time-title">fix: health_check 去 Worker 化 — 直接 HTTPS 验证回源</div>
-  <div class="time-desc">by m2008</div>
-  <div class="time-hash">a39ca31</div>
-</div>
-<div class="timeline-item">
-  <div class="time-label">2026-06-27</div>
-  <div class="time-title">📅 网页进化史: GitHub Action 自动生成 + 静态页面</div>
-  <div class="time-desc">by m2008</div>
-  <div class="time-hash">b27f875</div>
-</div>
-<div class="timeline-item">
-  <div class="time-label">2026-06-27</div>
-  <div class="time-title">🎯 Workers解耦: 静态资源零Function调用</div>
+  <div class="time-title">\1F3AF Workers解耦: 静态资源零Function调用</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">59a8294</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">🐛 修正URL: _report_stats不再套一层/stats</div>
+  <div class="time-title">\1F41B 修正URL: _report_stats不再套一层/stats</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">65140c6</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">🔧 报告脚本加User-Agent绕过Bot Fight Mode</div>
+  <div class="time-title">\1F527 报告脚本加User-Agent绕过Bot Fight Mode</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">23386d4</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">🔗 报告链路: /_report_stats代理绕过workers.dev</div>
+  <div class="time-title">\1F517 报告链路: /_report_stats代理绕过workers.dev</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">4946664</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">🔐 Counter Worker加固: 认证+限流+Origin校验</div>
+  <div class="time-title">\1F510 Counter Worker加固: 认证+限流+Origin校验</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">ba84785</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">🔧 CSP扩展: 恢复天气API + 修复ip-api混合内容</div>
+  <div class="time-title">\1F527 CSP扩展: 恢复天气API + 修复ip-api混合内容</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">e6aa3ad</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">🛡️ 安全加固: _headers缓存规则 + CSP meta标签</div>
+  <div class="time-title">\1F6E1 安全加固: _headers缓存规则 + CSP meta标签</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">f8e5c4c</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">🎨 免责声明美化: 卡片布局 + 左侧强调线 + 响应式</div>
+  <div class="time-title">\1F3A8 免责声明美化: 卡片布局 + 左侧强调线 + 响应式</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">a979550</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">📝 更新pimanager免责声明: 5条→7条 (新增高危场景禁用+衍生作品责任隔离)</div>
-  <div class="time-desc">by m2008</div>
-  <div class="time-hash">ec91884</div>
-</div>
-<div class="timeline-item">
-  <div class="time-label">2026-06-27</div>
-  <div class="time-title">🔒 健康验证阻断: 去continue-on-error + 0IP→exit1 + 修复--output参数bug + set+e捕获双路退出码</div>
+  <div class="time-title">\1F512 健康验证阻断: 去continue-on-error + 0IP→exit1 + 修复--output参数bug + set+e捕获双路退出码</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">96b1931</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">💾 状态文件补pimanager IP</div>
+  <div class="time-title">\1F4BE 状态文件补pimanager IP</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">6b9db4c</div>
 </div>
@@ -389,25 +360,25 @@ footer a:hover{color:#a0a0ff}
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">🔧 pimanager切A记录+优选: 加回TARGETS和FAILOVER</div>
+  <div class="time-title">\1F527 pimanager切A记录+优选: 加回TARGETS和FAILOVER</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">b5c5c2a</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">📦 pimanager 页面: blog + 免责 + 下载站</div>
+  <div class="time-title">\1F4E6 pimanager 页面: blog + 免责 + 下载站</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">f1c3ca6</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">💾 保存当前CF优选IP到状态文件，防止restore时用fallback</div>
+  <div class="time-title">\1F4BE 保存当前CF优选IP到状态文件，防止restore时用fallback</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">72bb33f</div>
 </div>
 <div class="timeline-item">
   <div class="time-label">2026-06-27</div>
-  <div class="time-title">🔧 容灾监控修复: 3次失败门槛 + pimanager CNAME适配 + double-output bug修复</div>
+  <div class="time-title">\1F527 容灾监控修复: 3次失败门槛 + pimanager CNAME适配 + double-output bug修复</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">b36e96c</div>
 </div>
@@ -435,15 +406,75 @@ footer a:hover{color:#a0a0ff}
   <div class="time-desc">by m2008</div>
   <div class="time-hash">0b1b5f6</div>
 </div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-26</div>
+  <div class="time-title">fix: 添加 contents:write 权限，修复 git push 403</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">2128adc</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-26</div>
+  <div class="time-title">监控报告系统 + PV计数器 + 容灾修复</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">546fc69</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-26</div>
+  <div class="time-title">fix: SDK参数名 — rr_keyword→rrkey_word, type_keyword→type_key_word (aliyun-sdk v4.4.1)</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">2ae44b4</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-26</div>
+  <div class="time-title">feat: CF优选IP智能自动化 v2 — 分线路优化 + 境内测速 + 容灾修复</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">52664a4</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-20</div>
+  <div class="time-title">redirect root -&gt; www.chenxiuniverse.top</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">db01366</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-19</div>
+  <div class="time-title">新文章: PiManager v2 — 从CTk到自建Pillow UI库</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">29d4664</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-19</div>
+  <div class="time-title">翻盘: CF Pages主站 + GitHub Pages备胎</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">3328895</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-19</div>
+  <div class="time-title">容灾监控: GitHub Actions 每5分钟检测 + DNS自动切换</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">f0e28ec</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-19</div>
+  <div class="time-title">容灾: CF Worker网关 + Pages备胎 + GitHub Actions优选IP</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">07fedc0</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-06-09</div>
+  <div class="time-title">添加项目记忆文件 .claude/memory.md</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">986f9b4</div>
+</div>
 </div>
 
 <div class="stats-bar">
   <span>里程碑: <span class="num">6</span></span>
-  <span>提交记录: <span class="num">24</span></span>
+  <span>提交记录: <span class="num">29</span></span>
 </div>
 
 <footer>
-  <p>自动生成于 2026-06-27 18:22:40 CST · <a href="https://github.com/muchen-xi/muchen-xi.github.io">GitHub</a></p>
+  <p>自动生成于 2026-06-27 18:00:00 CST · <a href="https://github.com/muchen-xi/muchen-xi.github.io">GitHub</a></p>
   <p style="margin-top:4px">数据来源: Counter API · 本地日志 · Git History · Powered by GitHub Actions</p>
 </footer>
 </body>
