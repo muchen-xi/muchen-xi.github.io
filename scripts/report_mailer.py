@@ -141,6 +141,7 @@ def get_traffic_stats(days: int = 7) -> dict:
         shared_secret = os.environ.get("COUNTER_SHARED_SECRET", "")
         url = f"{COUNTER_URL}/stats?days={days}&sites=www,pimanager"
         req = urllib.request.Request(url)
+        req.add_header("User-Agent", "Mozilla/5.0 (compatible; ChenxiMonitor/1.0)")
         if shared_secret:
             req.add_header("Authorization", f"Bearer {shared_secret}")
         with urllib.request.urlopen(req, timeout=15) as resp:
