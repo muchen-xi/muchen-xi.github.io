@@ -139,7 +139,7 @@ def get_traffic_stats(days: int = 7) -> dict:
     """从 counter Worker 获取页面访问量 (需认证)"""
     try:
         shared_secret = os.environ.get("COUNTER_SHARED_SECRET", "")
-        url = f"{COUNTER_URL}/stats?days={days}&sites=www,pimanager"
+        url = f"{COUNTER_URL}?days={days}&sites=www,pimanager"
         req = urllib.request.Request(url)
         req.add_header("User-Agent", "Mozilla/5.0 (compatible; ChenxiMonitor/1.0)")
         if shared_secret:
