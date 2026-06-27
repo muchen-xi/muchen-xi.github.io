@@ -270,6 +270,62 @@ nav .nav-links .btn-ghost:hover {
   overflow-x: auto;
 }
 
+/* Disclaimer Section */
+.disclaimer {
+  padding: 60px 0 80px;
+  scroll-margin-top: 32px;
+}
+
+.disclaimer h2 {
+  text-align: center;
+  font-size: 32px;
+  margin-bottom: 48px;
+}
+
+.disclaimer-content {
+  max-width: 800px;
+  margin: 0 auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 40px 48px;
+}
+
+.disclaimer-content > p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  margin-bottom: 20px;
+}
+
+.disclaimer-content > p:last-of-type {
+  margin-bottom: 0;
+}
+
+.disclaimer-content h3 {
+  font-size: 16px;
+  color: var(--text-primary);
+  font-weight: 600;
+  margin: 36px 0 12px 0;
+  padding-left: 16px;
+  border-left: 3px solid var(--accent);
+  line-height: 1.5;
+}
+
+.disclaimer-content h3:first-of-type {
+  margin-top: 0;
+}
+
+.disclaimer-content .thanks {
+  text-align: center;
+  color: var(--accent-glow);
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 44px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
 /* Footer */
 footer {
   border-top: 1px solid var(--border);
@@ -306,4 +362,5 @@ footer .divider {
   nav { padding: 16px; }
   nav .nav-links { gap: 12px; }
   nav .nav-links .btn-ghost { padding: 6px 12px; font-size: 13px; }
+  .disclaimer-content { padding: 28px 24px; }
 }
