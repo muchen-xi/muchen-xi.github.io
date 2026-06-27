@@ -72,6 +72,13 @@ jobs:
 
           echo "📊 数据采集完成: PV=$PV_TOTAL IP=$IP_COUNT 容灾=$FAILOVER_COUNT 建站=${DAYS_SINCE}天 提交=$COMMIT_TOTAL"
 
+      - name: Daily Screenshot
+        run: |
+          echo "📸 截取主站快照..."
+          pip install playwright Pillow -q 2>/dev/null
+          playwright install --with-deps chromium 2>/dev/null
+          python3 scripts/screenshot_history.py
+
       - name: Generate evolution.html
         run: |
           cat > evolution.html << 'HTMLEOF'
@@ -266,6 +273,23 @@ jobs:
           .timeline-item:nth-child(4){animation-delay:.12s}
           .timeline-item:nth-child(5){animation-delay:.16s}
           .timeline-item:nth-child(6){animation-delay:.20s}
+          /* Screenshot strip */
+          .screenshot-strip{
+            display:flex;flex-wrap:wrap;justify-content:center;gap:6px;
+            max-width:900px;margin:0 auto 16px;padding:0 20px;
+            position:relative;z-index:1;
+          }
+          .sc-dot{
+            display:flex;align-items:center;justify-content:center;
+            width:48px;height:48px;border-radius:8px;
+            background:#12122a;border:1px solid rgba(108,140,255,.15);
+            text-decoration:none;transition:all .2s;
+          }
+          .sc-dot:hover{border-color:rgba(160,108,255,.5);transform:scale(1.1)}
+          .sc-dot.changed{border-color:rgba(245,158,11,.5);box-shadow:0 0 8px rgba(245,158,11,.15)}
+          .sc-day{font-size:.6rem;color:#8888aa;text-align:center}
+          .sc-dot.changed .sc-day{color:#f59e0b}
+          .sc-empty{font-size:.78rem;color:#555577;text-align:center}
           /* Responsive */
           @media(max-width:900px){
             .stats-grid{grid-template-columns:repeat(3,1fr);gap:10px}
@@ -352,6 +376,32 @@ jobs:
             </div>
           </div>
           STATSEOF
+
+          # --- 截图快照区 ---
+          cat >> evolution.html << 'SCEOF'
+          <div class="section-title">📸 每日快照</div>
+          <div class="screenshot-strip">
+          SCEOF
+
+          if [ -f screenshots/manifest.json ]; then
+            python3 -c "
+          import json
+          manifest = json.load(open('screenshots/manifest.json'))
+          # 取最近 14 天的截图，最新的在前
+          recent = manifest[-14:] if len(manifest) > 14 else manifest
+          recent.reverse()
+          for s in recent:
+              cls = 'sc-dot changed' if s.get('changed') else 'sc-dot'
+              title = f\"{s['date']} | 变动 {s.get('diff_pct',0):.1f}%\" if s.get('changed') else s['date']
+              print(f'<a href=\"screenshots/{s[\"file\"]}\" target=\"_blank\" class=\"{cls}\" title=\"{title}\"><span class=\"sc-day\">{s[\"date\"][-5:]}</span></a>')
+          " >> evolution.html
+          else
+            echo '<span class="sc-empty">等待首次截图...</span>' >> evolution.html
+          fi
+
+          cat >> evolution.html << 'SCEOF'
+          </div>
+          SCEOF
 
           # --- 继续输出里程碑和 git 历史 ---
           cat >> evolution.html << 'HTMLEOF'
