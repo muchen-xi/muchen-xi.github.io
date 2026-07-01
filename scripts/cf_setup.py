@@ -28,9 +28,15 @@ def cf(method, path, data=None):
     if data:
         cmd += ["-d", json.dumps(data)]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    resp = json.loads(result.stdout)
+    try:
+        resp = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print(f"  API returned non-JSON: {result.stdout[:200]}", file=sys.stderr)
+        return {"success": False, "result": None, "errors": [{"message": "non-JSON response"}]}
     if not resp.get("success"):
-        print(f"  API ERROR: {resp.get('errors', 'unknown')}", file=sys.stderr)
+        errors = resp.get('errors', [])
+        msgs = [e.get('message', str(e)) for e in errors]
+        print(f"  API ERROR: {msgs}", file=sys.stderr)
     return resp
 
 
@@ -45,7 +51,7 @@ print(f"  Zone ID: {zone_id}")
 print("=" * 50)
 print("Step 2: List + Delete Worker Routes")
 resp = cf("GET", f"zones/{zone_id}/workers/routes")
-routes = resp.get("result", [])
+routes = resp.get("result") or []
 print(f"  Found {len(routes)} route(s):")
 deleted = 0
 for r in routes:
@@ -67,7 +73,11 @@ print("Step 3: Bind KV namespace to Pages")
 
 # First check current config
 resp = cf("GET", f"accounts/{CF_ACCOUNT}/pages/projects/{PAGES_PROJECT}")
-p = resp["result"]
+p = resp.get("result")
+if not p:
+    print("  FAILED: Cannot access Pages project (token may lack Pages:Read permission)")
+    print(f"  API response: {json.dumps(resp, indent=2)[:500]}")
+    sys.exit(1)
 print(f"  Project: {p['name']}")
 existing = p.get("deployment_configs", {}).get("production", {}).get("kv_namespaces", {})
 print(f"  Existing KV bindings: {existing}")
