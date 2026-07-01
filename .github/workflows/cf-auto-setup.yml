@@ -1,6 +1,9 @@
-name: CF 自动化 — 移除 Worker 路由 + 绑定 KV + 部署 Pages
+name: cf-auto-setup
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cf-auto-setup.yml'
 
 permissions:
   contents: read
