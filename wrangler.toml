@@ -1,9 +1,4 @@
-# Wrangler configuration for CF Pages project "248200-xyz"
-# KV binding for PV counting pipeline
-#
-# Once authenticated (wrangler login), deploy with:
-#   npx wrangler pages deploy . --project-name=248200-xyz --branch=main
-
+name = "248200-xyz"
 pages_build_output_dir = "."
 
 [[kv_namespaces]]
