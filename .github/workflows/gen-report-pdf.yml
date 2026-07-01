@@ -1,0 +1,28 @@
+name: 生成修复报告 PDF
+on:
+  workflow_dispatch:
+
+jobs:
+  pdf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装中文字体
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk 2>&1 | tail -3
+      - name: 生成 PDF
+        run: |
+          pandoc docs/fix-report-2026-07-01.md \
+            -o docs/fix-report-2026-07-01.pdf \
+            --pdf-engine=xelatex \
+            -V mainfont="Noto Sans CJK SC" \
+            -V geometry:margin=2.5cm \
+            -V colorlinks=true \
+            --metadata title="网站监控系统修复报告" \
+            2>&1
+      - name: 上传 PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: fix-report-pdf
+          path: docs/fix-report-2026-07-01.pdf
+          retention-days: 90
