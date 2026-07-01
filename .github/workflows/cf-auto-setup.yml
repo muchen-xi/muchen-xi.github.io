@@ -1,9 +1,6 @@
 name: cf-auto-setup
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.github/workflows/cf-auto-setup.yml'
 
 permissions:
   contents: read
@@ -11,143 +8,9 @@ permissions:
 jobs:
   setup:
     runs-on: ubuntu-latest
-    env:
-      CF_ACCOUNT: 20a34acd60bfbc3705c9eb330428480a
-      ZONE_NAME: chenxiuniverse.top
-      PAGES_PROJECT: 248200-xyz
-      KV_NAMESPACE_ID: 132f0237e83845caa4325effad690cee
-      KV_BINDING: SITE_ANALYTICS
     steps:
       - uses: actions/checkout@v4
-
-      # ─── Step 1: 获取 Zone ID ───
-      - name: 获取 Zone ID
-        id: zone
-        run: |
-          ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$ZONE_NAME" \
-            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['result'][0]['id'])")
-          echo "zone_id=$ZONE_ID" >> $GITHUB_OUTPUT
-          echo "Zone ID: $ZONE_ID"
-
-      # ─── Step 2: 列出并删除 Worker Routes ───
-      - name: 列出当前 Worker Routes
-        id: routes
-        run: |
-          curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ steps.zone.outputs.zone_id }}/workers/routes" \
-            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            | python3 -m json.tool
-
-      - name: 删除 www.chenxiuniverse.top/* Worker Route
-        run: |
-          ROUTES=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ steps.zone.outputs.zone_id }}/workers/routes" \
-            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
-            -H "Content-Type: application/json")
-
-          echo "$ROUTES" | python3 -c "
-      import sys, json
-      routes = json.load(sys.stdin)['result']
-      for r in routes:
-          pattern = r.get('pattern', '')
-          rid = r.get('id', '')
-          print(f'Found route: {pattern} (id={rid})')
-      "
-
-          # 删除匹配 www.chenxiuniverse.top 的路由
-          echo "$ROUTES" | python3 -c "
-      import sys, json, subprocess
-      routes = json.load(sys.stdin)['result']
-      token = '${{ secrets.CF_API_TOKEN }}'
-      zone = '${{ steps.zone.outputs.zone_id }}'
-      deleted = 0
-      for r in routes:
-          pattern = r.get('pattern', '')
-          rid = r.get('id', '')
-          if 'chenxiuniverse.top' in pattern:
-              print(f'Deleting route: {pattern} (id={rid})')
-              result = subprocess.run([
-                  'curl', '-s', '-X', 'DELETE',
-                  f'https://api.cloudflare.com/client/v4/zones/{zone}/workers/routes/{rid}',
-                  '-H', f'Authorization: Bearer {token}',
-                  '-H', 'Content-Type: application/json',
-              ], capture_output=True, text=True)
-              resp = json.loads(result.stdout)
-              if resp.get('success'):
-                  print(f'  ✅ Deleted')
-                  deleted += 1
-              else:
-                  print(f'  ❌ Failed: {resp.get(\"errors\", \"unknown\")}')
-      if deleted == 0:
-          print('No matching routes found — nothing to delete (may already be removed)')
-      "
-
-      # ─── Step 3: 配置 Pages KV binding ───
-      - name: 获取当前 Pages 项目配置
-        run: |
-          curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/pages/projects/$PAGES_PROJECT" \
-            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            | python3 -c "
-      import sys, json
-      p = json.load(sys.stdin)['result']
-      print(f'Project: {p[\"name\"]}')
-      print(f'Subdomain: {p.get(\"subdomain\", \"N/A\")}')
-      existing = p.get('deployment_configs', {}).get('production', {}).get('kv_namespaces', {})
-      print(f'Existing KV bindings: {json.dumps(existing, indent=2) if existing else \"(none)\"}')
-      "
-
-      - name: 绑定 SITE_ANALYTICS KV namespace 到 Pages
-        run: |
-          echo '{
-            "deployment_configs": {
-              "production": {
-                "kv_namespaces": {
-                  "'$KV_BINDING'": "'$KV_NAMESPACE_ID'"
-                }
-              }
-            }
-          }' > /tmp/kv_patch.json
-
-          echo "Patching Pages project with KV binding..."
-          RESP=$(curl -s -X PATCH \
-            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/pages/projects/$PAGES_PROJECT" \
-            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d @/tmp/kv_patch.json)
-
-          echo "$RESP" | python3 -m json.tool
-
-          SUCCESS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success', False))")
-          if [ "$SUCCESS" != "True" ]; then
-            echo "::error::KV binding 配置失败"
-            exit 1
-          fi
-          echo "✅ KV binding $KV_BINDING → $KV_NAMESPACE_ID 配置成功"
-
-      # ─── Step 4: 使用 Wrangler 部署 Pages ───
-      - name: 使用 Wrangler 部署 Pages（含 Functions）
-        run: |
-          npx wrangler pages deploy . --project-name=$PAGES_PROJECT --branch=main --commit-dirty=true 2>&1
+      - name: Run CF automation
+        run: python3 scripts/cf_setup.py
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-
-      # ─── Step 5: 验证端点 ───
-      - name: 等待部署生效
-        run: sleep 30
-
-      - name: 验证 /ping 端点
-        run: |
-          echo "=== POST /ping (sendBeacon) ==="
-          curl -s -w "\nHTTP %{http_code}" -X POST "https://www.chenxiuniverse.top/ping?site=cf-setup-test"
-          echo ""
-          echo "=== GET /ping (img fallback) ==="
-          curl -s -o /dev/null -w "HTTP %{http_code}, Content-Type: %{content_type}\n" "https://www.chenxiuniverse.top/ping?site=cf-setup-test"
-          echo ""
-          echo "=== /_report_stats (Bearer auth) ==="
-          curl -s -H "Authorization: Bearer 207ddbc0c5376668adb2f5c225fae18ed0859c3cf86865ab" \
-            "https://www.chenxiuniverse.top/_report_stats?days=1&sites=cf-setup-test" | python3 -m json.tool 2>/dev/null || echo "(非JSON响应，可能还在传播中)"
-          echo ""
-          echo "=== 主站 ==="
-          curl -s -o /dev/null -w "HTTP %{http_code}\n" "https://www.chenxiuniverse.top/"
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
