@@ -1,0 +1,508 @@
+name: Generate Evolution History
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '37 16 * * *'  # 每天 UTC 16:37 = 北京时间 00:37
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 完整 git 历史
+
+      - name: Collect stats data
+        run: |
+          # 获取 PV 数据（如果失败则设为 N/A）
+          PV_JSON=$(curl -s --max-time 15 "https://www.chenxiuniverse.top/_report_stats?days=30&sites=www" \
+            -H "Authorization: Bearer ${{ secrets.COUNTER_SHARED_SECRET }}" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            2>/dev/null || echo '{}')
+
+          # 尝试解析总PV（JSON 或 HTML 均可能返回）
+          PV_TOTAL=$(echo "$PV_JSON" | python3 -c "
+          import sys,json
+          try:
+            data=json.load(sys.stdin)
+            total=0
+            if isinstance(data,dict):
+              for v in data.values():
+                if isinstance(v,(int,float)): total+=v
+                elif isinstance(v,dict):
+                  for vv in v.values():
+                    if isinstance(vv,(int,float)): total+=vv
+            print(total) if total>0 else print('N/A')
+          except: print('N/A')
+          " 2>/dev/null || echo 'N/A')
+
+          echo "PV_TOTAL=$PV_TOTAL" >> $GITHUB_ENV
+
+          # 统计 IP 优选次数
+          IP_COUNT=$(ls logs/events/*ip_update*.json 2>/dev/null | wc -l || echo 0)
+          echo "IP_COUNT=$IP_COUNT" >> $GITHUB_ENV
+
+          # 统计容灾次数 (backup_count + restore_count)
+          FAILOVER_COUNT=$(python3 -c "
+          import json, os
+          total_b = 0
+          total_r = 0
+          if os.path.exists('logs/stats.json'):
+              stats = json.load(open('logs/stats.json'))
+              for d in stats.values():
+                  total_b += d.get('backup_count', 0)
+                  total_r += d.get('restore_count', 0)
+          print(f'{total_b+total_r}|{total_b}|{total_r}')
+          " 2>/dev/null || echo '0|0|0')
+          echo "FAILOVER_COUNT=$(echo $FAILOVER_COUNT | cut -d'|' -f1)" >> $GITHUB_ENV
+          echo "BACKUP_COUNT=$(echo $FAILOVER_COUNT | cut -d'|' -f2)" >> $GITHUB_ENV
+          echo "RESTORE_COUNT=$(echo $FAILOVER_COUNT | cut -d'|' -f3)" >> $GITHUB_ENV
+
+          # 建站天数 (从 2026-06-19 算起)
+          DAYS_SINCE=$(( ($(date +%s) - $(date -d '2026-06-19' +%s)) / 86400 ))
+          echo "DAYS_SINCE=$DAYS_SINCE" >> $GITHUB_ENV
+
+          # Git 提交总数
+          COMMIT_TOTAL=$(git rev-list --count HEAD)
+          echo "COMMIT_TOTAL=$COMMIT_TOTAL" >> $GITHUB_ENV
+
+          echo "📊 数据采集完成: PV=$PV_TOTAL IP=$IP_COUNT 容灾=$FAILOVER_COUNT 建站=${DAYS_SINCE}天 提交=$COMMIT_TOTAL"
+
+      - name: Daily Screenshot
+        run: |
+          echo "📸 截取主站快照..."
+          pip install playwright Pillow -q 2>/dev/null
+          playwright install --with-deps chromium 2>/dev/null
+          python3 scripts/screenshot_history.py
+
+      - name: Generate evolution.html
+        run: |
+          cat > evolution.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>晨曦的宇宙 · 网页进化史</title>
+          <style>
+          /* ===== Space Theme — 完全自包含，与 space.css 同配色 ===== */
+          *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+          html{scroll-behavior:smooth}
+          body{
+            background:#0a0a1a;color:#e0e0f0;
+            font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
+            min-height:100vh;overflow-x:hidden;
+            background-image:
+              radial-gradient(ellipse at 50% 20%,rgba(108,140,255,.08),transparent 60%),
+              radial-gradient(ellipse at 80% 80%,rgba(160,108,255,.05),transparent 50%);
+          }
+          /* Starfield (CSS-only) */
+          body::before{
+            content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+            background:
+              radial-gradient(1px 1px at 5% 8%,rgba(255,255,255,.9),transparent),
+              radial-gradient(2px 2px at 12% 18%,rgba(200,210,255,.8),transparent),
+              radial-gradient(1px 1px at 22% 6%,rgba(255,255,255,.6),transparent),
+              radial-gradient(1px 1px at 30% 22%,rgba(255,255,255,.7),transparent),
+              radial-gradient(2px 2px at 38% 12%,rgba(200,220,255,.9),transparent),
+              radial-gradient(1px 1px at 45% 28%,rgba(255,255,255,.5),transparent),
+              radial-gradient(1px 1px at 52% 8%,rgba(255,255,255,.8),transparent),
+              radial-gradient(2px 2px at 60% 20%,rgba(180,200,255,.7),transparent),
+              radial-gradient(1px 1px at 68% 14%,rgba(255,255,255,.6),transparent),
+              radial-gradient(1px 1px at 75% 25%,rgba(255,255,255,.9),transparent),
+              radial-gradient(2px 2px at 82% 10%,rgba(200,210,255,.8),transparent),
+              radial-gradient(1px 1px at 90% 18%,rgba(255,255,255,.5),transparent),
+              radial-gradient(1px 1px at 8% 35%,rgba(255,255,255,.6),transparent),
+              radial-gradient(1px 1px at 18% 48%,rgba(255,255,255,.7),transparent),
+              radial-gradient(2px 2px at 28% 38%,rgba(180,210,255,.8),transparent),
+              radial-gradient(1px 1px at 38% 52%,rgba(255,255,255,.5),transparent),
+              radial-gradient(1px 1px at 48% 42%,rgba(255,255,255,.9),transparent),
+              radial-gradient(2px 2px at 55% 55%,rgba(200,220,255,.7),transparent),
+              radial-gradient(1px 1px at 65% 45%,rgba(255,255,255,.4),transparent),
+              radial-gradient(1px 1px at 72% 58%,rgba(255,255,255,.6),transparent),
+              radial-gradient(2px 2px at 80% 48%,rgba(200,210,255,.8),transparent),
+              radial-gradient(1px 1px at 88% 38%,rgba(255,255,255,.5),transparent),
+              radial-gradient(1px 1px at 95% 52%,rgba(255,255,255,.7),transparent),
+              radial-gradient(2px 2px at 10% 68%,rgba(180,200,255,.6),transparent),
+              radial-gradient(1px 1px at 22% 75%,rgba(255,255,255,.5),transparent),
+              radial-gradient(1px 1px at 35% 62%,rgba(255,255,255,.8),transparent),
+              radial-gradient(2px 2px at 45% 72%,rgba(200,220,255,.7),transparent),
+              radial-gradient(1px 1px at 55% 65%,rgba(255,255,255,.4),transparent),
+              radial-gradient(1px 1px at 68% 78%,rgba(255,255,255,.6),transparent),
+              radial-gradient(2px 2px at 78% 65%,rgba(200,210,255,.9),transparent),
+              radial-gradient(1px 1px at 85% 75%,rgba(255,255,255,.5),transparent),
+              radial-gradient(1px 1px at 93% 70%,rgba(255,255,255,.7),transparent),
+              radial-gradient(1px 1px at 6% 85%,rgba(255,255,255,.5),transparent),
+              radial-gradient(2px 2px at 18% 92%,rgba(200,210,255,.6),transparent),
+              radial-gradient(1px 1px at 32% 82%,rgba(255,255,255,.7),transparent),
+              radial-gradient(1px 1px at 42% 88%,rgba(255,255,255,.4),transparent),
+              radial-gradient(2px 2px at 55% 85%,rgba(180,210,255,.8),transparent),
+              radial-gradient(1px 1px at 68% 92%,rgba(255,255,255,.5),transparent),
+              radial-gradient(1px 1px at 80% 82%,rgba(255,255,255,.6),transparent),
+              radial-gradient(2px 2px at 90% 90%,rgba(200,220,255,.7),transparent);
+          }
+          /* Header */
+          header{text-align:center;padding:40px 20px;position:relative;z-index:1}
+          header h1{
+            font-size:clamp(1.8rem,4vw,2.5rem);font-weight:700;letter-spacing:2px;
+            background:linear-gradient(135deg,#6c8cff,#a06cff);
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+            background-clip:text;
+          }
+          header .subtitle{font-size:clamp(.85rem,1.5vw,1rem);color:#8888aa;margin-top:8px;letter-spacing:1px}
+          /* ===== Stats Dashboard ===== */
+          .stats-grid{
+            display:grid;
+            grid-template-columns:repeat(5,1fr);
+            gap:14px;
+            max-width:940px;
+            margin:0 auto 10px;
+            padding:0 20px;
+            position:relative;z-index:1;
+          }
+          .stat-card{
+            background:#12122a;
+            border:1px solid rgba(108,140,255,.18);
+            border-radius:12px;
+            padding:18px 14px 16px;
+            text-align:center;
+            position:relative;
+            overflow:hidden;
+            transition:border-color .3s,box-shadow .3s,transform .2s;
+            animation:fadeInUp .5s ease-out both;
+          }
+          .stat-card:nth-child(2){animation-delay:.06s}
+          .stat-card:nth-child(3){animation-delay:.12s}
+          .stat-card:nth-child(4){animation-delay:.18s}
+          .stat-card:nth-child(5){animation-delay:.24s}
+          .stat-card:hover{
+            border-color:rgba(160,108,255,.45);
+            box-shadow:0 4px 24px rgba(108,140,255,.12);
+            transform:translateY(-2px);
+          }
+          .stat-card::before{
+            content:'';
+            position:absolute;top:0;left:12px;right:12px;
+            height:1px;
+            background:linear-gradient(90deg,transparent,rgba(108,140,255,.5),transparent);
+          }
+          .stat-card .stat-icon{
+            font-size:1.6rem;
+            margin-bottom:6px;
+            display:block;
+          }
+          .stat-card .stat-icon.g1{background:linear-gradient(135deg,#6c8cff,#a06cff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-icon.g2{background:linear-gradient(135deg,#4facfe,#00f2fe);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-icon.g3{background:linear-gradient(135deg,#f093fb,#f5576c);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-icon.g4{background:linear-gradient(135deg,#a18cd1,#fbc2eb);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-icon.g5{background:linear-gradient(135deg,#43e97b,#38f9d7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+          .stat-card .stat-num{
+            font-size:clamp(1.5rem,2.5vw,2rem);
+            font-weight:800;
+            color:#e0e0f0;
+            letter-spacing:1px;
+            line-height:1.2;
+          }
+          .stat-card .stat-label{
+            font-size:.72rem;
+            color:#7777aa;
+            margin-top:4px;
+            letter-spacing:.5px;
+          }
+          .stat-card .stat-sub{
+            font-size:.65rem;
+            color:#555577;
+            margin-top:2px;
+          }
+          /* Section divider */
+          .section-title{
+            text-align:center;font-size:.85rem;color:#666688;letter-spacing:2px;
+            padding:20px 0 8px;position:relative;z-index:1;
+          }
+          /* Timeline */
+          .timeline{position:relative;padding-left:32px;max-width:700px;margin:0 auto;z-index:1}
+          .timeline::before{
+            content:'';position:absolute;left:12px;top:0;bottom:0;width:2px;
+            background:linear-gradient(to bottom,#6c8cff,#a06cff,transparent);
+          }
+          .timeline-item{position:relative;margin-bottom:28px;padding-left:24px}
+          .timeline-item::before{
+            content:'';position:absolute;left:-24px;top:6px;
+            width:10px;height:10px;border-radius:50%;
+            background:#6c8cff;border:2px solid #12122a;
+            box-shadow:0 0 8px rgba(108,140,255,.4);
+          }
+          .timeline-item .time-label{font-size:.78rem;color:#8888aa;margin-bottom:4px;letter-spacing:1px}
+          .timeline-item .time-title{font-size:1.05rem;font-weight:600;color:#e0e0f0;margin-bottom:4px}
+          .timeline-item .time-desc{font-size:.85rem;color:#9999bb;line-height:1.5}
+          .timeline-item .time-hash{font-size:.7rem;color:#555577;font-family:monospace;margin-top:2px}
+          /* Milestone */
+          .timeline-item.milestone::before{
+            content:'\2605';left:-28px;top:2px;width:auto;height:auto;
+            background:none;border:none;border-radius:0;
+            color:#a06cff;font-size:16px;line-height:1;
+            box-shadow:0 0 12px rgba(160,108,255,.5);
+          }
+          .timeline-item.milestone .time-title{color:#c0a0ff;font-weight:700;font-size:1.1rem}
+          .timeline-item.milestone .time-desc{color:#b0a0dd}
+          /* Stats bar */
+          .stats-bar{
+            text-align:center;font-size:.8rem;color:#7777aa;position:relative;z-index:1;
+            padding:16px 20px 0;
+          }
+          .stats-bar span{margin:0 12px}
+          .stats-bar .num{color:#a06cff;font-weight:600}
+          /* Footer */
+          footer{text-align:center;font-size:.78rem;color:#666688;padding:24px 20px;position:relative;z-index:1}
+          footer a{color:#8888cc;text-decoration:none}
+          footer a:hover{color:#a0a0ff}
+          /* Scrollbar */
+          ::-webkit-scrollbar{width:4px}
+          ::-webkit-scrollbar-track{background:transparent}
+          ::-webkit-scrollbar-thumb{background:rgba(108,140,255,.2);border-radius:4px}
+          ::-webkit-scrollbar-thumb:hover{background:rgba(108,140,255,.35)}
+          /* Animations */
+          @keyframes fadeInUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+          .timeline-item{animation:fadeInUp .4s ease-out both}
+          .timeline-item:nth-child(2){animation-delay:.04s}
+          .timeline-item:nth-child(3){animation-delay:.08s}
+          .timeline-item:nth-child(4){animation-delay:.12s}
+          .timeline-item:nth-child(5){animation-delay:.16s}
+          .timeline-item:nth-child(6){animation-delay:.20s}
+          /* Screenshot strip */
+          .screenshot-strip{
+            display:flex;flex-wrap:wrap;justify-content:center;gap:6px;
+            max-width:900px;margin:0 auto 16px;padding:0 20px;
+            position:relative;z-index:1;
+          }
+          .sc-dot{
+            display:flex;align-items:center;justify-content:center;
+            width:48px;height:48px;border-radius:8px;
+            background:#12122a;border:1px solid rgba(108,140,255,.15);
+            text-decoration:none;transition:all .2s;
+          }
+          .sc-dot:hover{border-color:rgba(160,108,255,.5);transform:scale(1.1)}
+          .sc-dot.changed{border-color:rgba(245,158,11,.5);box-shadow:0 0 8px rgba(245,158,11,.15)}
+          .sc-day{font-size:.6rem;color:#8888aa;text-align:center}
+          .sc-dot.changed .sc-day{color:#f59e0b}
+          .sc-empty{font-size:.78rem;color:#555577;text-align:center}
+          /* Responsive */
+          @media(max-width:900px){
+            .stats-grid{grid-template-columns:repeat(3,1fr);gap:10px}
+          }
+          @media(max-width:768px){
+            header{padding:28px 16px}
+            header h1{font-size:1.5rem;letter-spacing:1px}
+            .stats-grid{grid-template-columns:repeat(2,1fr);gap:8px;padding:0 12px}
+            .stat-card{padding:14px 10px 12px}
+            .stat-card .stat-num{font-size:1.3rem}
+            .stat-card .stat-label{font-size:.68rem}
+            .timeline{padding-left:24px}
+            .timeline::before{left:8px}
+            .timeline-item{padding-left:18px;margin-bottom:22px}
+            .timeline-item::before{left:-18px;width:8px;height:8px}
+            .timeline-item.milestone::before{left:-21px;font-size:14px}
+          }
+          @media(max-width:420px){
+            .stats-grid{grid-template-columns:1fr 1fr;gap:6px;padding:0 8px}
+            .stat-card{padding:10px 8px 10px}
+            .stat-card .stat-icon{font-size:1.2rem}
+            .stat-card .stat-num{font-size:1.1rem}
+          }
+          </style>
+          </head>
+          <body>
+          <header>
+            <h1>网页进化史</h1>
+            <p class="subtitle">Evolution of chenxiuniverse.top</p>
+          </header>
+
+          <!-- STATS_DASHBOARD -->
+          HTMLEOF
+
+          # --- 注入统计卡片（使用环境变量） ---
+          PV_DISPLAY="${PV_TOTAL:-统计中}"
+          IP_DISPLAY="${IP_COUNT:-0}"
+          FO_DISPLAY="${FAILOVER_COUNT:-0}"
+          BK_DISPLAY="${BACKUP_COUNT:-0}"
+          RE_DISPLAY="${RESTORE_COUNT:-0}"
+          DAYS_DISPLAY="${DAYS_SINCE:-1}"
+          CT_DISPLAY="${COMMIT_TOTAL:-0}"
+
+          # 格式化 PV (数字千分位)
+          if [ "$PV_DISPLAY" != "统计中" ] && [ "$PV_DISPLAY" != "N/A" ]; then
+            PV_FMT=$(printf "%'d" "$PV_DISPLAY" 2>/dev/null || echo "$PV_DISPLAY")
+            PV_SUB="30天 · www 站点"
+          else
+            PV_FMT="统计中"
+            PV_SUB="等待 Counter API 数据"
+          fi
+
+          cat >> evolution.html << STATSEOF
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-icon g1">&#x1F4CA;</span>
+              <div class="stat-num">${PV_FMT}</div>
+              <div class="stat-label">累计 PV</div>
+              <div class="stat-sub">${PV_SUB}</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon g2">&#x1F52C;</span>
+              <div class="stat-num">${IP_DISPLAY}</div>
+              <div class="stat-label">IP 优选次数</div>
+              <div class="stat-sub">自动优选 + 分线路更新</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon g3">&#x26A1;</span>
+              <div class="stat-num">${FO_DISPLAY}</div>
+              <div class="stat-label">容灾触发次数</div>
+              <div class="stat-sub">备份 ${BK_DISPLAY} 次 · 恢复 ${RE_DISPLAY} 次</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon g4">&#x1F4C5;</span>
+              <div class="stat-num">${DAYS_DISPLAY}</div>
+              <div class="stat-label">建站天数</div>
+              <div class="stat-sub">自 2026-06-19 立项</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon g5">&#x1F4DD;</span>
+              <div class="stat-num">${CT_DISPLAY}</div>
+              <div class="stat-label">Git 提交</div>
+              <div class="stat-sub">累计 commits</div>
+            </div>
+          </div>
+          STATSEOF
+
+          # --- 截图快照区 ---
+          cat >> evolution.html << 'SCEOF'
+          <div class="section-title">📸 每日快照</div>
+          <div class="screenshot-strip">
+          SCEOF
+
+          if [ -f screenshots/manifest.json ]; then
+            python3 -c "
+          import json
+          manifest = json.load(open('screenshots/manifest.json'))
+          # 取最近 14 天的截图，最新的在前
+          recent = manifest[-14:] if len(manifest) > 14 else manifest
+          recent.reverse()
+          for s in recent:
+              cls = 'sc-dot changed' if s.get('changed') else 'sc-dot'
+              title = f\"{s['date']} | 变动 {s.get('diff_pct',0):.1f}%\" if s.get('changed') else s['date']
+              print(f'<a href=\"screenshots/{s[\"file\"]}\" target=\"_blank\" class=\"{cls}\" title=\"{title}\"><span class=\"sc-day\">{s[\"date\"][-5:]}</span></a>')
+          " >> evolution.html
+          else
+            echo '<span class="sc-empty">等待首次截图...</span>' >> evolution.html
+          fi
+
+          cat >> evolution.html << 'SCEOF'
+          </div>
+          SCEOF
+
+          # --- 继续输出里程碑和 git 历史 ---
+          cat >> evolution.html << 'HTMLEOF'
+
+          <div class="section-title">\2605 里程碑</div>
+          <div class="timeline">
+          <!-- MILESTONES_START -->
+          HTMLEOF
+
+          # --- 硬编码里程碑 ---
+          cat >> evolution.html << 'HTMLEOF'
+          <div class="timeline-item milestone">
+            <div class="time-label">2026-06-27</div>
+            <div class="time-title">\26A1 容灾体系建立</div>
+            <div class="time-desc">GitHub Actions 每5分钟健康检查 + DNS自动切备站/恢复 + CF Worker网关 + Pages备胎，零成本实现高可用</div>
+          </div>
+          <div class="timeline-item milestone">
+            <div class="time-label">2026-06-26</div>
+            <div class="time-title">\1F52C CF优选IP实验启动</div>
+            <div class="time-desc">ChinaSpeedTest境内测速 + OverseaSpeedTest境外测速 + 分线路DNS自动更新，实现全球访问加速</div>
+          </div>
+          <div class="timeline-item milestone">
+            <div class="time-label">2026-06-19</div>
+            <div class="time-title">\1F4E1 PiManager v2 上线</div>
+            <div class="time-desc">从 CustomTkinter 到自建 Pillow UI 库 pillui，MIT 开源 + 独立下载站 pimanager.chenxiuniverse.top</div>
+          </div>
+          <div class="timeline-item milestone">
+            <div class="time-label">2026-06-19</div>
+            <div class="time-title">\2601 Cloudflare 迁移</div>
+            <div class="time-desc">从 GitHub Pages 迁移至 CF Pages Account B (248200-xyz)，_worker.js 统一网关 + Workers 后端</div>
+          </div>
+          <div class="timeline-item milestone">
+            <div class="time-label">2026-06-09</div>
+            <div class="time-title">\1F310 首次部署 + 域名注册</div>
+            <div class="time-desc">muchen-xi.github.io 首次部署 GitHub Pages，注册 chenxiuniverse.top 域名</div>
+          </div>
+          <div class="timeline-item milestone">
+            <div class="time-label">2026-06-09</div>
+            <div class="time-title">\1F680 项目立项</div>
+            <div class="time-desc">晨曦的宇宙个人主页项目启动，目标打造技术博客 + 项目展示 + 下载站的个人品牌网站</div>
+          </div>
+          <!-- MILESTONES_END -->
+          HTMLEOF
+
+          # --- 分隔线 ---
+          cat >> evolution.html << 'HTMLEOF'
+          </div>
+          <div class="section-title">\1F4DC Git 提交历史</div>
+          <div class="timeline">
+          HTMLEOF
+
+          # --- Git 提交历史（过滤自动提交） ---
+          GIT_LOG=$(git log --format="%H|%ai|%s|%an" -50)
+          COMMIT_COUNT=0
+          while IFS='|' read -r hash date msg author; do
+            # 跳过自动提交（包含 github-actions bot 或 emoji 标记的自动提交）
+            echo "$author" | grep -q "github-actions" && continue
+            echo "$msg" | grep -qE '(\1F4DD|\1F4CA|\1F4C5)' && continue
+
+            COMMIT_COUNT=$((COMMIT_COUNT + 1))
+            DATE_FMT=$(echo "$date" | cut -d' ' -f1)
+            SHORT_HASH=$(echo "$hash" | cut -c1-7)
+            SAFE_MSG=$(echo "$msg" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')
+            SAFE_AUTHOR=$(echo "$author" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')
+
+            cat >> evolution.html << ITEMEOF
+          <div class="timeline-item">
+            <div class="time-label">$DATE_FMT</div>
+            <div class="time-title">$SAFE_MSG</div>
+            <div class="time-desc">by $SAFE_AUTHOR</div>
+            <div class="time-hash">$SHORT_HASH</div>
+          </div>
+          ITEMEOF
+          done << GITLOGEOF
+          $GIT_LOG
+          GITLOGEOF
+
+          # --- 关闭 ---
+          GENERATED_AT=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S CST')
+          cat >> evolution.html << HTMLEOF
+          </div>
+
+          <div class="stats-bar">
+            <span>里程碑: <span class="num">6</span></span>
+            <span>提交记录: <span class="num">${COMMIT_COUNT}</span></span>
+          </div>
+
+          <footer>
+            <p>自动生成于 ${GENERATED_AT} · <a href="https://github.com/muchen-xi/muchen-xi.github.io">GitHub</a></p>
+            <p style="margin-top:4px">数据来源: Counter API · 本地日志 · Git History · Powered by GitHub Actions</p>
+          </footer>
+          </body>
+          </html>
+          HTMLEOF
+
+          echo "✅ evolution.html 生成完毕 (${COMMIT_COUNT} 条提交记录, PV=${PV_DISPLAY}, IP=${IP_DISPLAY}, 容灾=${FO_DISPLAY})"
+
+      - name: Commit evolution.html
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add evolution.html screenshots/
+          git diff --staged --quiet || git commit -m "📅 更新网页进化史 [skip ci]"
+          git push

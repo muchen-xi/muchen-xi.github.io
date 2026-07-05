@@ -1,0 +1,9 @@
+{
+  "title": "创意编程",
+  "description": "用代码创造可交互的世界",
+  "articles": [
+    {"file": "01-gomoku-ai.md", "title": "五子棋 AI 诞生记"},
+    {"file": "02-game-ideas.md", "title": "想做的小游戏"},
+    {"file": "03-pygame-toolkit.md", "title": "PyGame 工具箱"}
+  ]
+}

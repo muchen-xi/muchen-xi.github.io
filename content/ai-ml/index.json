@@ -1,0 +1,9 @@
+{
+  "title": "AI & 机器学习",
+  "description": "从 COP 建模迈向深度学习",
+  "articles": [
+    {"file": "01-from-cop-to-dl.md", "title": "从 COP 建模到深度学习"},
+    {"file": "02-learning-path.md", "title": "AI 学习路线图"},
+    {"file": "03-project-ideas.md", "title": "想做的小项目"}
+  ]
+}

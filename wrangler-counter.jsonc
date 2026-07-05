@@ -1,0 +1,11 @@
+{
+  "name": "counter",
+  "main": "worker/counter.js",
+  "compatibility_date": "2025-01-01",
+  "kv_namespaces": [
+    {
+      "binding": "SITE_ANALYTICS",
+      "id": "132f0237e83845caa4325effad690cee"
+    }
+  ]
+}

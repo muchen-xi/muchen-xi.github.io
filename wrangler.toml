@@ -1,0 +1,6 @@
+name = "248200-xyz"
+pages_build_output_dir = "."
+
+[[kv_namespaces]]
+binding = "SITE_ANALYTICS"
+id = "132f0237e83845caa4325effad690cee"

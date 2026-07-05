@@ -1,0 +1,9 @@
+{
+  "title": "内容创作",
+  "description": "分享让知识流动起来",
+  "articles": [
+    {"file": "01-bilibili-plan.md", "title": "B站频道规划"},
+    {"file": "02-video-ideas.md", "title": "想做的视频内容"},
+    {"file": "03-creator-notes.md", "title": "创作手记"}
+  ]
+}
