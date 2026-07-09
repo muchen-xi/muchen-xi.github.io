@@ -1,10 +1,11 @@
-name: 监控报告
+name: 监控报告（已停用）
+# 2026-07-09: 报告已迁移至 cf-ip-optimizer 仓库，该仓库有实时 stats.json。
+# personal-site 的 stats.json 在 P0 v3 后停止更新（failover-monitor 已迁走）。
+# 保留 workflow_dispatch 以备手动调试。
 on:
-  schedule:
-    # 每天 7:00 北京时间 = 23:00 UTC (前一天)
-    - cron: '0 23 * * *'
-    # 每周五 15:30 北京时间 = 07:30 UTC
-    - cron: '30 7 * * 5'
+  # schedule:   ← 停用定时，避免与 cf-ip-optimizer 重复发信
+  #   - cron: '0 23 * * *'
+  #   - cron: '30 7 * * 5'
   workflow_dispatch:
     inputs:
       type:
