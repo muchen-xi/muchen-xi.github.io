@@ -37,6 +37,15 @@ body{font-family:system-ui,'Microsoft YaHei',sans-serif;background:#0a0a1a;color
 .footer{text-align:center;margin-top:40px;padding-top:20px;border-top:1px solid rgba(99,102,241,.08);font-size:11px;color:#4a4a6a;letter-spacing:1px;line-height:1.8}
 .footer strong{color:#6366f1;font-weight:600}
 @media(max-width:480px){.container{padding:32px 14px 24px}.cards{grid-template-columns:1fr}.info-bar{flex-direction:column;align-items:center;gap:8px}}
+
+.pv-section-title{font-size:12px;color:#6a6a8a;letter-spacing:2px;text-align:center;margin-bottom:10px}
+.pv-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px}
+.pv-card{background:rgba(108,140,255,.04);border:1px solid rgba(108,140,255,.1);border-radius:10px;padding:12px 14px;text-align:center;transition:border-color .2s}
+.pv-card:hover{border-color:rgba(108,140,255,.25)}
+.pv-card .site-name{font-size:12px;font-weight:600;color:#8a8ac0;margin-bottom:6px}
+.pv-card .site-count{font-size:22px;font-weight:700;color:#6366f1}
+.pv-card .site-label{font-size:10px;color:#4a4a6a;margin-top:2px}
+.pv-status{text-align:center;font-size:11px;color:#4a4a6a;min-height:18px}
 </style>
 </head>
 <body>
@@ -48,6 +57,13 @@ body{font-family:system-ui,'Microsoft YaHei',sans-serif;background:#0a0a1a;color
 
 <div id="banner"></div>
 <div id="cards" class="cards"></div>
+
+<!-- PV Stats from KV (no auth -- health subdomain trusted by _middleware.js) -->
+<div id="pv-section">
+  <p class="pv-section-title">📊 近7天访问统计 (KV)</p>
+  <div id="pv-cards" class="pv-cards"></div>
+  <div id="pv-status" class="pv-status">加载中...</div>
+</div>
 
 <div class="info-bar">
   <span>检查方式 <strong>客户端直连</strong></span>
@@ -136,10 +152,36 @@ document.getElementById('cards').innerHTML = TARGETS.map(t => `
   </div>
 `).join('');
 
+
+async function loadPVStats(){
+  var el=document.getElementById('pv-cards');
+  var st=document.getElementById('pv-status');
+  try{
+    var ctrl=new AbortController();
+    var t=setTimeout(function(){ctrl.abort()},6000);
+    var res=await fetch('https://www.chenxiuniverse.top/_report_stats?days=7&sites=www,pimanager,health,history',{signal:ctrl.signal,cache:'no-cache'});
+    clearTimeout(t);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    var dates=Object.keys(data).sort();
+    if(!dates.length)throw new Error('No data');
+    var totals={};
+    dates.forEach(function(d){Object.entries(data[d]||{}).forEach(function(e){totals[e[0]]=(totals[e[0]]||0)+e[1]})});
+    var sites=Object.entries(totals).sort(function(a,b){return b[1]-a[1]});
+    if(!sites.length)throw new Error('No sites');
+    var SITE_NAMES={www:'主站',pimanager:'PiManager',health:'健康面板',history:'进化史'};
+    el.innerHTML=sites.map(function(e){return '<div class="pv-card"><div class="site-name">'+esc(SITE_NAMES[e[0]]||e[0])+'</div><div class="site-count">'+e[1]+'</div><div class="site-label">7天PV</div></div>'}).join('');
+    st.textContent='数据来源 KV · 最新 '+dates[dates.length-1];
+  }catch(e){
+    el.innerHTML='<div class="pv-card" style="grid-column:1/-1"><div class="site-name">数据不可用</div><div class="site-label" style="color:#6a6a8a">KV 端点暂不可达</div></div>';
+    st.textContent='回退: 健康检查数据仍来自 failover-monitor';
+  }
+}
 // 执行检查
 (async () => {
   const results = await Promise.all(TARGETS.map(checkTarget));
   render(results);
+  loadPVStats();
 })();
 </script>
 <script>(function(){var u='https://www.chenxiuniverse.top/ping?site=health';navigator.sendBeacon?navigator.sendBeacon(u):(new Image()).src=u;})()</script>
