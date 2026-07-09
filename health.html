@@ -159,7 +159,7 @@ async function loadPVStats(){
   try{
     var ctrl=new AbortController();
     var t=setTimeout(function(){ctrl.abort()},6000);
-    var res=await fetch('https://www.chenxiuniverse.top/_report_stats?days=7&sites=www,pimanager,health,history',{signal:ctrl.signal,cache:'no-cache'});
+    var res=await fetch('/_report_stats?days=7&sites=www,pimanager,health,history',{signal:ctrl.signal,cache:'no-cache'});
     clearTimeout(t);
     if(!res.ok)throw new Error('HTTP '+res.status);
     var data=await res.json();
