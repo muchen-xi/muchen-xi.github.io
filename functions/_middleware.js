@@ -115,14 +115,18 @@ async function handlePing(request, KV) {
   });
 }
 
-/** Bearer-auth-protected JSON report of PV counts. */
+/** JSON report of PV counts — public for health.chenxiuniverse.top, Bearer for others. */
 async function handleReportStats(request, KV) {
   const url = new URL(request.url);
 
-  // ---- auth gate (404 to hide the endpoint's existence) ----
-  const auth = request.headers.get('Authorization');
-  if (!auth || auth !== `Bearer ${BEARER_TOKEN}`) {
-    return new Response('Not Found', { status: 404 });
+  // ---- auth gate: skip for internal health panel, require Bearer for external ----
+  const hostname = url.hostname;
+  const isInternal = hostname === 'health.chenxiuniverse.top' || hostname.startsWith('localhost') || hostname.startsWith('127.0.0.1');
+  if (!isInternal) {
+    const auth = request.headers.get('Authorization');
+    if (!auth || auth !== `Bearer ${BEARER_TOKEN}`) {
+      return new Response('Not Found', { status: 404 });
+    }
   }
 
   // ---- params ----
