@@ -110,9 +110,11 @@ def get_records(client: AlidnsClient, rr: str, line: str) -> list[dict]:
         line=line,
     )
     resp = client.describe_domain_records(req)
+    # 阿里云 SDK 对无匹配记录/空响应时可能把 domain_records 置为 None，必须空值保护
+    records_body = resp.body.domain_records if resp.body else None
     records = [
         {"record_id": r.record_id, "value": r.value, "rr": r.rr, "line": r.line}
-        for r in resp.body.domain_records.record
+        for r in (records_body.record if records_body else [])
         if r.rr == rr and r.type == "A" and r.line == line
     ]
     return records
@@ -151,31 +153,37 @@ def update_to_ips(
     if dry_run:
         return True  # 有潜在变更，但不执行
 
-    # 更新已有记录 / 新增
+    # 更新已有记录 / 新增（与删除分支一致做异常防护，避免中途崩溃留半切状态）
+    aborted = False
     for i, ip in enumerate(new_ips):
-        if i < len(current_ids):
-            req = alidns_models.UpdateDomainRecordRequest(
-                record_id=current_ids[i],
-                rr=rr,
-                type="A",
-                value=ip,
-                line=line,
-                ttl=TTL,
-            )
-            client.update_domain_record(req)
-            old = current_ips[i] if i < len(current_ips) else "?"
-            print(f"  更新 #{i + 1}: {old} -> {ip}")
-        else:
-            req = alidns_models.AddDomainRecordRequest(
-                domain_name=DOMAIN,
-                rr=rr,
-                type="A",
-                value=ip,
-                line=line,
-                ttl=TTL,
-            )
-            client.add_domain_record(req)
-            print(f"  新增 #{i + 1}: {ip}")
+        try:
+            if i < len(current_ids):
+                req = alidns_models.UpdateDomainRecordRequest(
+                    record_id=current_ids[i],
+                    rr=rr,
+                    type="A",
+                    value=ip,
+                    line=line,
+                    ttl=TTL,
+                )
+                client.update_domain_record(req)
+                old = current_ips[i] if i < len(current_ips) else "?"
+                print(f"  更新 #{i + 1}: {old} -> {ip}")
+            else:
+                req = alidns_models.AddDomainRecordRequest(
+                    domain_name=DOMAIN,
+                    rr=rr,
+                    type="A",
+                    value=ip,
+                    line=line,
+                    ttl=TTL,
+                )
+                client.add_domain_record(req)
+                print(f"  新增 #{i + 1}: {ip}")
+        except Exception as e:
+            print(f"  ⚠ 切换中断: 记录 #{i + 1} 操作失败 ({e}) — DNS 可能处于 MIXED 状态", file=sys.stderr)
+            aborted = True
+            break  # 停止后续写入，避免进一步半切
 
     # 删除多余的旧记录
     for j in range(len(new_ips), len(current_ids)):
@@ -187,7 +195,9 @@ def update_to_ips(
         except Exception as e:
             print(f"  ⚠ 删除 #{j + 1} 失败: {e}")
 
-    return True
+    if aborted:
+        print("  切换未完整完成，可重新执行 backup/restore 收敛", file=sys.stderr)
+    return not aborted
 
 
 # ---------------------------------------------------------------------------
@@ -265,9 +275,21 @@ def cmd_backup(
     """切换到备站: 将 default 线路 A 记录指向 GH Pages IPs。"""
     targets = FAILOVER_TARGETS if include_pimanager else FAILOVER_TARGETS[:1]
 
+    # 1. 幂等保护：若目标子域已是备站/混合状态，拒绝覆盖状态文件（否则原始 CF IP 永久丢失）
+    for target in targets:
+        rr = target["rr"]
+        line = target["line"]
+        current = get_current_ips(client, rr, line)
+        st = detect_state(current)
+        if st in ("BACKUP", "MIXED"):
+            print(f"❌ {rr}.{DOMAIN} 已是 {st} 状态，拒绝覆盖状态文件（原始 IP 可能已丢失）。", file=sys.stderr)
+            print(f"   如需恢复请先执行 restore，或手动核对 DNS 后再处理。", file=sys.stderr)
+            sys.exit(1)
+
     # 1. 保存当前状态
+    from datetime import datetime, timezone
     state: dict = {
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "action": "backup",
     }
     for target in targets:
@@ -336,8 +358,9 @@ def cmd_restore(
         line = target["line"]
         current_ips = get_current_ips(client, rr, line)
 
-        target_ips = saved_state.get(rr, []) if saved_state else []
-        if not target_ips:
+        # 区分"保存过但为空"(恢复为空，不新增记录) 与"从未保存"(fallback 兜底)
+        target_ips = saved_state.get(rr) if saved_state else None
+        if target_ips is None:
             target_ips = list(FALLBACK_CF_IPS)
             print(f"  ⚠ {rr}: 无保存的 IP，fallback -> {target_ips}")
 
