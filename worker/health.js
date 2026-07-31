@@ -1,16 +1,13 @@
 /**
- * 248200.xyz Health Check Worker
+ * ⚠️ 已废弃 — 旧健康检查 Worker，已被客户端直连检查取代，请勿部署/使用。
  *
- * 验证 CF IP 是否正常回源。
- * 返回请求来源的 CF colo 和连接 IP，帮助判断 IP 路由质量。
+ * 历史: 2026-06 时代部署于 health.m20081225.workers.dev / health.248200.xyz (Account B)。
+ * 2026-06-27 压测打爆配额引发 P0 后解构 worker 依赖 →
+ *   健康检查改由 `health.html` 客户端 HEAD 直连 TARGETS，CF IP 验证
+ *   改由 scripts/health_check.py 用 curl --resolve 直连 www.chenxiuniverse.top。
  *
- * 用法:
- *   curl https://health.248200.xyz
- *   → {"status":"ok","colo":"HKG","ip":"162.159.39.168","upstream":"ok"}
- *
- * 部署 (Account B: 20a34acd...):
- *   npx wrangler deploy worker/health.js --name health --compatibility-date 2025-01-01
- *   然后在 CF Dashboard → 248200.xyz → Workers Routes → 添加 health.248200.xyz/* → health
+ * 部署在 CF 上的同名 Worker 至今未删（残留，见 fix-report-2026-08-01 待办），
+ * 但当前站点健康检查完全不经过它。本文件仅作历史存档保留。
  */
 
 const ORIGIN = 'https://chenxiuniverse-top.pages.dev';

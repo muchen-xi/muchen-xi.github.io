@@ -1,27 +1,13 @@
 /**
- * 晨曦的宇宙 · 页面访问计数器
+ * ⚠️ 已废弃 — 旧 PV 计数 Worker，已被 Pages Functions 取代，请勿部署/使用。
  *
- * 记录 PV 到 KV (SITE_ANALYTICS), 通过 tracking pixel 触发,
- * 报告生成器通过 /stats 端点读取数据。
+ * 历史: 2026-06 时代部署于 counter.m20081225.workers.dev (Account B)。
+ * 2026-06-27 压测打爆配额引发 P0 后解构 worker 依赖 →
+ *   PV 计数改由 Pages Functions `functions/_middleware.js` 的 handlePing() 承担
+ *   (POST /ping → KV pv:YYYY-MM-DD:site)，/stats 由 /_report_stats 取代。
  *
- * 端点:
- *   POST /ping?site=www     sendBeacon 记录一次访问 (POST)
- *   GET  /ping?site=www     老式 img pixel 记录 (GET 兜底)
- *   GET  /stats?days=7      返回最近 N 天 JSON 数据 (需认证)
- *
- * KV key 格式: pv:YYYY-MM-DD:site
- *
- * 保护:
- *   - /ping: Origin/Referer 校验 + KV 简易频率限制 (120次/分钟/IP)
- *   - /stats: 需 Authorization: Bearer <SHARED_SECRET>
- *
- * 部署 (Account B: 20a34acd...):
- *   npx wrangler kv:namespace create SITE_ANALYTICS
- *   npx wrangler secret put SHARED_SECRET --name counter
- *   npx wrangler deploy worker/counter.js --name counter \\
- *     --compatibility-date 2025-01-01
- *   然后 CF Dashboard → Workers & Pages → counter → Settings →
- *     Bindings → KV → SITE_ANALYTICS → 绑定 namespace
+ * 部署在 CF 上的同名 Worker 至今未删（残留，见 fix-report-2026-08-01 待办），
+ * 但当前站点计数完全不经过它。本文件仅作历史存档保留。
  */
 
 const PIXEL = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
