@@ -1,7 +1,17 @@
 /**
- * chenxiuniverse.top 容灾网关
- * 主: GitHub Pages (muchen-xi.github.io)
- * 备: CF Pages (chenxiuniverse-top.pages.dev)
+ * ⚠️ 已废弃 — 旧架构的"容灾网关"，已不在任何请求链路中，请勿使用或误以为它还在工作。
+ *
+ * 历史: 2026-06 境外加速时期，在 Account A (3c5c9230...) 部署为 cx-failover worker，
+ *       workers.dev 地址: cx-failover.chenxi20081128.workers.dev。
+ * 现状 (2026-08-01): Account A 境外加速已停用。
+ *   - 路由由 Pages Functions `_middleware.js` 承担
+ *     (chenxiuniverse.top 跳转 / pimanager / history / health 子域)。
+ *   - 容灾由 cf-ip-optimizer 的 `failover-monitor.yml`（阿里云 DNS 切换至 GitHub Pages 备站）承担。
+ *   - 本 worker 未绑定任何生效域名，不在 DNS 链路上，收不到流量。
+ * 已知 bug: tryFetch 原样转发客户端 Host 头给 muchen-xi.github.io，GitHub Pages 按 Host
+ *         虚拟主机返回 404，备站 fallback 永不触发。
+ * 待办: 确认无流量依赖后删除本文件 + `worker/` 目录，并从 CF Dashboard 删除
+ *       cx-failover / counter / health worker（详见 fix-report-2026-08-01.md 遗留待办）。
  */
 
 const PRIMARY = 'https://muchen-xi.github.io';
