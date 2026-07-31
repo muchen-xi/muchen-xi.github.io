@@ -62,8 +62,8 @@ jobs:
           echo "BACKUP_COUNT=$(echo $FAILOVER_COUNT | cut -d'|' -f2)" >> $GITHUB_ENV
           echo "RESTORE_COUNT=$(echo $FAILOVER_COUNT | cut -d'|' -f3)" >> $GITHUB_ENV
 
-          # 建站天数 (从 2026-06-19 算起)
-          DAYS_SINCE=$(( ($(date +%s) - $(date -d '2026-06-19' +%s)) / 86400 ))
+          # 建站天数 (从 2026-06-19 算起，按北京时间对齐，避免 UTC 零点翻转)
+          DAYS_SINCE=$(( ( $(TZ='Asia/Shanghai' date +%s) - $(TZ='Asia/Shanghai' date -d '2026-06-19' +%s) ) / 86400 ))
           echo "DAYS_SINCE=$DAYS_SINCE" >> $GITHUB_ENV
 
           # Git 提交总数
@@ -459,7 +459,7 @@ jobs:
           while IFS='|' read -r hash date msg author; do
             # 跳过自动提交（包含 github-actions bot 或 emoji 标记的自动提交）
             echo "$author" | grep -q "github-actions" && continue
-            echo "$msg" | grep -qE '(\1F4DD|\1F4CA|\1F4C5)' && continue
+            echo "$msg" | grep -qE '📝|📊|📅' && continue
 
             COMMIT_COUNT=$((COMMIT_COUNT + 1))
             DATE_FMT=$(echo "$date" | cut -d' ' -f1)
@@ -493,6 +493,8 @@ jobs:
             <p>自动生成于 ${GENERATED_AT} · <a href="https://github.com/muchen-xi/muchen-xi.github.io">GitHub</a></p>
             <p style="margin-top:4px">数据来源: Counter API · 本地日志 · Git History · Powered by GitHub Actions</p>
           </footer>
+          <!-- history 页 PV 埋点：每次重新生成都必须保留，否则 history 停止计数 -->
+          <script>(function(){var u='https://www.chenxiuniverse.top/ping?site=history';if(navigator.sendBeacon){navigator.sendBeacon(u)}else{var i=new Image();i.src=u}})();</script>
           </body>
           </html>
           HTMLEOF
