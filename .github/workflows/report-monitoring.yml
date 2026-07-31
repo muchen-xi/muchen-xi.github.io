@@ -1,11 +1,10 @@
-name: 监控报告（已停用）
-# 2026-07-09: 报告已迁移至 cf-ip-optimizer 仓库，该仓库有实时 stats.json。
-# personal-site 的 stats.json 在 P0 v3 后停止更新（failover-monitor 已迁走）。
-# 保留 workflow_dispatch 以备手动调试。
+name: 监控报告
 on:
-  # schedule:   ← 停用定时，避免与 cf-ip-optimizer 重复发信
-  #   - cron: '0 23 * * *'
-  #   - cron: '30 7 * * 5'
+  schedule:
+    # 每天 7:00 北京时间 = 23:00 UTC (前一天)
+    - cron: '0 23 * * *'
+    # 每周五 15:30 北京时间 = 07:30 UTC
+    - cron: '30 7 * * 5'
   workflow_dispatch:
     inputs:
       type:
@@ -31,16 +30,16 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "report=${{ inputs.type }}" >> $GITHUB_OUTPUT
-          elif [ "$(date -u +%H)" = "07" ]; then
-            # 07:30 UTC = 周五 15:30 北京 → 周报
+          elif [ "${{ github.event.schedule }}" = "30 7 * * 5" ]; then
+            # 周五 15:30 北京 周报 cron → 周报（用 schedule 精确匹配，不受 GitHub 延迟执行影响）
             echo "report=weekly" >> $GITHUB_OUTPUT
           else
-            # 23:00 UTC = 每天 7:00 北京 → 日报
+            # 每天 7:00 北京 日报 cron → 日报
             echo "report=daily" >> $GITHUB_OUTPUT
           fi
 
       - name: 生成并发送报告
-        run: python3 scripts/report_mailer.py ${{ steps.type.outputs.report }}
+        run: python3 monitoring/scripts/report_mailer.py ${{ steps.type.outputs.report }}
         env:
           ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
           ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
@@ -50,7 +49,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_SENDER_NAME: ${{ secrets.SMTP_SENDER_NAME }}
           REPORT_TO: ${{ secrets.REPORT_TO }}
-          COUNTER_SHARED_SECRET: ${{ secrets.COUNTER_SHARED_SECRET }}
+          REPORT_STATS_SECRET: ${{ secrets.COUNTER_SHARED_SECRET }}
         continue-on-error: true
 
       - name: 上传报告（备份）
@@ -58,5 +57,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: report-${{ steps.type.outputs.report }}
-          path: logs/report_*.html
+          path: monitoring/logs/report_*.html
           retention-days: 30

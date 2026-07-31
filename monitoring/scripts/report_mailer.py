@@ -2,9 +2,9 @@
 监控报告生成 + 邮件发送 — 日报 / 周报
 
 用法:
-  python scripts/report_mailer.py daily    生成过去 24h 日报并发送
-  python scripts/report_mailer.py weekly   生成过去 7 天周报并发送
-  python scripts/report_mailer.py daily --dry-run   仅生成 HTML，不发送
+  python monitoring/scripts/report_mailer.py daily    生成过去 24h 日报并发送
+  python monitoring/scripts/report_mailer.py weekly   生成过去 7 天周报并发送
+  python monitoring/scripts/report_mailer.py daily --dry-run   仅生成 HTML，不发送
 
 环境变量:
   ALI_KEY_ID / ALI_KEY_SECRET    — 阿里云 DNS (查询当前状态)
@@ -12,6 +12,7 @@
   SMTP_USERNAME / SMTP_PASSWORD  — 发件认证
   SMTP_SENDER_NAME               — 发件人显示名 (默认 "晨曦的宇宙 · 监控")
   REPORT_TO                      — 收件人，逗号分隔
+  REPORT_STATS_SECRET            — 流量统计端点 Bearer 密钥
 """
 
 import json
@@ -25,6 +26,11 @@ from email.mime.text import MIMEText
 from email.header import Header
 from email.utils import formataddr
 from pathlib import Path
+
+# Windows 本地控制台为 GBK，强制 UTF-8 输出避免 emoji 打印崩溃
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -70,7 +76,8 @@ def get_current_dns_state() -> dict:
                 )
                 resp = client.describe_domain_records(req)
                 ips = []
-                for r in resp.body.domain_records.record:
+                records_body = resp.body.domain_records if resp.body else None
+                for r in (records_body.record if records_body else []):
                     if r.rr == rr and r.type == "A" and r.line == line:
                         ips.append(r.value)
 
@@ -107,10 +114,12 @@ def read_events(since_hours: int = 24) -> list[dict]:
         try:
             ev = json.loads(f.read_text(encoding="utf-8"))
             ts = datetime.fromisoformat(ev["ts"].replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)  # 归一化 naive 时间戳，避免与 aware cutoff 比较抛 TypeError
             if ts >= cutoff:
                 ev["_file"] = f.name
                 events.append(ev)
-        except (json.JSONDecodeError, KeyError, ValueError):
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
             continue
 
     return events
@@ -126,27 +135,35 @@ def read_stats(since_days: int = 7) -> dict:
     except (json.JSONDecodeError, OSError):
         return {}
 
-    cutoff = (datetime.now() - timedelta(days=since_days)).strftime("%Y-%m-%d")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
     return {k: v for k, v in sorted(all_stats.items()) if k >= cutoff}
 
 
 # ─── 流量统计 ───
 
 REPORT_STATS_URL = "https://www.chenxiuniverse.top/_report_stats"
-SHARED_SECRET = "207ddbc0c5376668adb2f5c225fae18ed0859c3cf86865ab"
+SHARED_SECRET = os.environ.get("REPORT_STATS_SECRET", "")
 
 
 def get_traffic_stats(days: int = 7) -> dict:
-    """从 Pages Function 端点获取页面访问量"""
+    """从 Pages Function 端点获取页面访问量（Bearer 认证）"""
+    if not SHARED_SECRET:
+        print("⚠ 缺少 REPORT_STATS_SECRET，跳过流量统计")
+        return {}
     try:
         url = f"{REPORT_STATS_URL}?days={days}&sites=www,pimanager"
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Bearer {SHARED_SECRET}")
+        req.add_header("User-Agent", "chenxiuniverse-top/1.0 (monitoring)")
         with urllib.request.urlopen(req, timeout=15) as resp:
-            if resp.status == 404:
-                print("⚠ 流量端点未部署 (/_report_stats)")
-                return {}
             return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        # urlopen 对 4xx/5xx 抛异常而非返回响应对象，需在此捕获
+        if e.code == 404:
+            print("⚠ 流量端点未部署 (/_report_stats)")
+        else:
+            print(f"⚠ 流量数据获取失败: HTTP {e.code}")
+        return {}
     except Exception as e:
         print(f"⚠ 流量数据获取失败: {e}")
         return {}
@@ -220,7 +237,7 @@ def build_html(report_type: str) -> str:
     stats = read_stats(since_days=stats_days)
     dns = get_current_dns_state()
     traffic = get_traffic_stats(days=(1 if report_type == "daily" else 7))
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     # ── 统计数据 ──
     total_checks = sum(s.get("checks_total", 0) for s in stats.values())
@@ -240,6 +257,9 @@ def build_html(report_type: str) -> str:
 
     # ── DNS 状态 ──
     dns_rows = ""
+    if not dns:
+        dns_rows = ("<tr><td colspan='4' style='color:#e0556a'>"
+                    "⚠ DNS 状态查询失败 / 数据不可用（阿里云凭据或端点异常）</td></tr>")
     for key, info in dns.items():
         rr, line = key.split(".", 1)
         status_class = "tag-backup" if info["is_backup"] else "tag-primary"
@@ -360,7 +380,7 @@ def build_html(report_type: str) -> str:
 <div class="footer">
   <p>晨曦的宇宙 · 自动监控系统<br>
   <a href="https://www.chenxiuniverse.top">chenxiuniverse.top</a> ·
-  <a href="https://github.com/muchen-xi/cf-ip-optimizer">cf-ip-optimizer</a></p>
+  <a href="https://github.com/muchen-xi/muchen-xi.github.io">muchen-xi.github.io</a></p>
   <p>此邮件由 GitHub Actions 自动发送</p>
 </div>
 
@@ -440,15 +460,14 @@ def main():
         print(f"   文件大小: {len(html)} 字符")
         return
 
-    # 邮件主题
-    now = datetime.now()
+    # 邮件主题（与数据窗口一致：日报=当日，周报=滚动 7 天）
+    now = datetime.now(timezone.utc)
     if report_type == "daily":
         subject = f"🌐 网站监控日报 — {now.strftime('%Y-%m-%d')}"
     else:
-        # 本周五 → "2026-06-22 ~ 2026-06-26"
         week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
         week_end = now.strftime("%Y-%m-%d")
-        subject = f"🌐 网站监控周报 — {week_start} ~ {week_end}"
+        subject = f"🌐 网站监控周报 — {week_start} ~ {week_end} (滚动7天)"
 
     send_email(html, subject)
 

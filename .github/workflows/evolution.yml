@@ -43,7 +43,7 @@ jobs:
           echo "PV_TOTAL=$PV_TOTAL" >> $GITHUB_ENV
 
           # 统计 IP 优选次数
-          IP_COUNT=$(ls logs/events/*ip_update*.json 2>/dev/null | wc -l || echo 0)
+          IP_COUNT=$(ls monitoring/logs/events/*ip_update*.json 2>/dev/null | wc -l || echo 0)
           echo "IP_COUNT=$IP_COUNT" >> $GITHUB_ENV
 
           # 统计容灾次数 (backup_count + restore_count)
@@ -51,8 +51,8 @@ jobs:
           import json, os
           total_b = 0
           total_r = 0
-          if os.path.exists('logs/stats.json'):
-              stats = json.load(open('logs/stats.json'))
+          if os.path.exists('monitoring/logs/stats.json'):
+              stats = json.load(open('monitoring/logs/stats.json'))
               for d in stats.values():
                   total_b += d.get('backup_count', 0)
                   total_r += d.get('restore_count', 0)

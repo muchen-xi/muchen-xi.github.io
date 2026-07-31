@@ -2,9 +2,9 @@
 监控事件日志器 — 供 failover-monitor 和 cf-ip-optimize workflow 调用
 
 用法:
-  python scripts/monitor_logger.py failover-check --status ok|fail [--http-code 200]
-  python scripts/monitor_logger.py failover-action --action backup|restore [--target www.default]
-  python scripts/monitor_logger.py ip-update --overseas "1.2.3.4,5.6.7.8" --china "9.10.11.12" [--changed]
+  python monitoring/scripts/monitor_logger.py failover-check --status ok|fail [--http-code 200]
+  python monitoring/scripts/monitor_logger.py failover-action --action backup|restore [--target www.default]
+  python monitoring/scripts/monitor_logger.py ip-update --overseas "1.2.3.4,5.6.7.8" --china "9.10.11.12" [--changed]
 
 事件以独立 JSON 文件写入 logs/events/，文件名含时间戳。
 并发 workflow 各写各的文件，零冲突。
@@ -35,7 +35,8 @@ def log_event(event_type: str, data: dict) -> str:
     """写入一个事件文件，返回文件路径"""
     ensure_dirs()
     ts = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
-    fname = f"{ts}_{event_type}.json"
+    # 加纳秒后缀：并发 workflow 同秒写同类型事件时避免互相覆盖
+    fname = f"{ts}_{time.time_ns()}_{event_type}.json"
     event = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "type": event_type}
     event.update(data)
     path = EVENTS_DIR / fname
@@ -44,10 +45,20 @@ def log_event(event_type: str, data: dict) -> str:
     return str(path)
 
 
+def get_arg(name: str) -> str | None:
+    """兼容 --name=value 与 --name value 两种传参形式"""
+    for i, a in enumerate(sys.argv):
+        if a == name and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if a.startswith(f"{name}="):
+            return a.split("=", 1)[1]
+    return None
+
+
 def update_stats(key: str, increment: int = 1):
-    """更新 stats.json 中的计数器（当日统计）"""
+    """更新 stats.json 中的计数器（当日统计，用 UTC 与事件时间戳对齐）"""
     ensure_dirs()
-    today = time.strftime("%Y-%m-%d")
+    today = time.strftime("%Y-%m-%d", time.gmtime())
     stats = {}
     if STATS_FILE.exists():
         try:
@@ -68,11 +79,8 @@ def update_stats(key: str, increment: int = 1):
 
 def cmd_failover_check():
     """记录健康检查结果 + 更新每日统计"""
-    status = sys.argv[3] if len(sys.argv) > 3 else "ok"
-    http_code = None
-    for a in sys.argv:
-        if a.startswith("--http-code="):
-            http_code = a.split("=", 1)[1]
+    status = get_arg("--status") or "ok"
+    http_code = get_arg("--http-code")
 
     # 始终更新统计（轻量 JSON 写入）
     update_stats("checks_total")
@@ -89,11 +97,8 @@ def cmd_failover_check():
 
 def cmd_failover_action():
     """记录 DNS 切换动作"""
-    action = sys.argv[3] if len(sys.argv) > 3 else "backup"
-    target = "www.default"
-    for a in sys.argv:
-        if a.startswith("--target="):
-            target = a.split("=", 1)[1]
+    action = get_arg("--action") or "backup"
+    target = get_arg("--target") or "www.default"
 
     log_event("failover_action", {"action": action, "target": target})
     update_stats(f"{action}_count")
@@ -101,16 +106,9 @@ def cmd_failover_action():
 
 def cmd_ip_update():
     """记录优选 IP 更新事件"""
-    overseas = ""
-    china = ""
-    changed = False
-    for a in sys.argv:
-        if a.startswith("--overseas="):
-            overseas = a.split("=", 1)[1]
-        elif a.startswith("--china="):
-            china = a.split("=", 1)[1]
-        elif a == "--changed":
-            changed = True
+    overseas = get_arg("--overseas") or ""
+    china = get_arg("--china") or ""
+    changed = "--changed" in sys.argv
 
     data = {"changed": changed}
     if overseas:

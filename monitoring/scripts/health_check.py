@@ -1,6 +1,6 @@
 """
 IP 可用性验证脚本 — 直接 HTTPS 验证（零 Worker 依赖）
-用法: python3 scripts/health_check.py [input.csv] [output.csv] [--target example.com]
+用法: python3 monitoring/scripts/health_check.py [input.csv] [output.csv] [--target example.com]
 
 输入: 候选 IP CSV（CloudflareST 格式或纯 IP 列表）
 输出: 有效 IP 的 CSV（通过直接 HTTPS 验证的 IP）
