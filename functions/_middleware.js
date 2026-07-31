@@ -121,7 +121,12 @@ async function handleReportStats(request, KV) {
 
   // ---- auth gate: skip for internal health panel, require Bearer for external ----
   const hostname = url.hostname;
-  const isInternal = hostname === 'health.chenxiuniverse.top' || hostname.startsWith('localhost') || hostname.startsWith('127.0.0.1');
+  // 健康面板自身（health 子域 / www 的 /health 备用入口）放行；Referer 校验保证面板取数不暴露 token
+  const referer = request.headers.get('Referer') || '';
+  const isInternal =
+    hostname === 'health.chenxiuniverse.top' ||
+    hostname.startsWith('localhost') || hostname.startsWith('127.0.0.1') ||
+    /\/health(\/|$)/.test(referer);
   if (!isInternal) {
     const auth = request.headers.get('Authorization');
     if (!auth || auth !== `Bearer ${BEARER_TOKEN}`) {
@@ -131,7 +136,7 @@ async function handleReportStats(request, KV) {
 
   // ---- params ----
   const daysParam = parseInt(url.searchParams.get('days'));
-  const days = Math.min(isNaN(daysParam) ? 7 : daysParam, 90);
+  const days = Math.max(1, Math.min(isNaN(daysParam) ? 7 : daysParam, 90));
 
   const sitesRaw = url.searchParams.get('sites') || 'www,pimanager';
   const sites = sitesRaw.split(',').map(s => s.trim()).filter(Boolean);
@@ -208,17 +213,24 @@ export async function onRequest(context) {
 
   // pimanager subdomain → /pimanager/ content
   if (hostname === 'pimanager.chenxiuniverse.top') {
-    return env.ASSETS.fetch(new URL('/pimanager' + url.pathname, url.origin).toString());
+    return env.ASSETS.fetch(new URL('/pimanager' + url.pathname + url.search, url.origin).toString());
   }
 
   // history subdomain → evolution page
   if (hostname === 'history.chenxiuniverse.top') {
-    return env.ASSETS.fetch(new URL('/evolution.html', url.origin).toString());
+    // 仅根路径返回页面；screenshots/ 等相对静态资源必须走 next()，否则全被 HTML 劫持
+    if (url.pathname === '/' || url.pathname === '') {
+      return env.ASSETS.fetch(new URL('/evolution.html', url.origin).toString());
+    }
+    return next();
   }
 
   // health subdomain → health page
   if (hostname === 'health.chenxiuniverse.top') {
-    return env.ASSETS.fetch(new URL('/health.html', url.origin).toString());
+    if (url.pathname === '/' || url.pathname === '') {
+      return env.ASSETS.fetch(new URL('/health.html', url.origin).toString());
+    }
+    return next();
   }
 
   // Everything else → static assets

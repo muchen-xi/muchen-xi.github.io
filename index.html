@@ -680,8 +680,7 @@
     CI.forEach(function(c){var b=document.createElement('button');b.className='cbtn';b.textContent=c.n;b.addEventListener('click',function(){po=false;cp.classList.remove('op');localStorage.setItem('wc',JSON.stringify({n:c.n,la:c.la,lo:c.lo}));fu(c.la,c.lo,c.n);});cg.appendChild(b);});
     document.getElementById('lb').addEventListener('click',function(){po=!po;cp.classList.toggle('op',po);});
     (async function(){var sv=localStorage.getItem('wc');if(sv){try{var c=JSON.parse(sv);EL.lb.textContent=c.n;fu(c.la,c.lo,c.n);return}catch(e){}}
-      try{var r1=await fetch('https://ip-api.com/json/?fields=city,lat,lon'),d1=await r1.json();if(d1&&d1.city){EL.lb.textContent=d1.city;fu(d1.lat,d1.lon,d1.city)}else throw Error()}catch(e){
-        try{var r2=await fetch('https://ipinfo.io/json'),d2=await r2.json();EL.lb.textContent=d2.city||'未知';var cr=d2.loc.split(',');fu(parseFloat(cr[0]),parseFloat(cr[1]),d2.city)}catch(e2){EL.lb.textContent='定位失败';EL.ad.textContent='点击城市名手动选择';}}
+      try{var r2=await fetch('https://ipinfo.io/json'),d2=await r2.json();EL.lb.textContent=d2.city||'未知';var cr=d2.loc.split(',');fu(parseFloat(cr[0]),parseFloat(cr[1]),d2.city)}catch(e2){EL.lb.textContent='定位失败';EL.ad.textContent='点击城市名手动选择';}
       if('geolocation'in navigator){navigator.geolocation.getCurrentPosition(function(pos){
         fetch('https://nominatim.openstreetmap.org/reverse?lat='+pos.coords.latitude+'&lon='+pos.coords.longitude+'&format=json&accept-language=zh')
           .then(function(r){return r.json()}).then(function(g){var nm=g.address.city||g.address.town||g.address.county;if(nm)EL.lb.textContent=nm;localStorage.setItem('wc',JSON.stringify({n:nm,la:pos.coords.latitude,lo:pos.coords.longitude}));}).catch(function(){});

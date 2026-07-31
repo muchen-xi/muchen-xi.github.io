@@ -174,7 +174,7 @@ async function loadPVStats(){
     st.textContent='数据来源 KV · 最新 '+dates[dates.length-1];
   }catch(e){
     el.innerHTML='<div class="pv-card" style="grid-column:1/-1"><div class="site-name">数据不可用</div><div class="site-label" style="color:#6a6a8a">KV 端点暂不可达</div></div>';
-    st.textContent='回退: 健康检查数据仍来自 failover-monitor';
+    st.textContent='PV 统计暂不可用：/_report_stats 端点未响应';
   }
 }
 // 执行检查

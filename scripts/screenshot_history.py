@@ -62,8 +62,13 @@ def main():
 
     # 检查今天是否已截图
     today_path = SCREENSHOTS_DIR / f"{TODAY}.webp"
+    saved_path = today_path  # 实际落盘文件（可能是 .png 兜底）
     if today_path.exists():
         print(f"  [skip] {TODAY}.webp exists")
+    elif (SCREENSHOTS_DIR / f"{TODAY}.png").exists():
+        # 上次 Pillow 兜底留下的 PNG
+        saved_path = SCREENSHOTS_DIR / f"{TODAY}.png"
+        print(f"  [skip] {TODAY}.png exists")
     else:
         # Playwright 截图
         try:
@@ -80,6 +85,7 @@ def main():
                 browser.close()
 
             # 转为 WebP 缩略图 (Pillow)
+            saved_path = today_path  # 默认 .webp
             try:
                 from PIL import Image
                 img = Image.open(tmp)
@@ -90,28 +96,36 @@ def main():
                 os.remove(tmp)  # 删除原始 PNG
             except Exception:
                 import shutil
-                shutil.move(tmp, today_path)  # Pillow 不可用，用原始 PNG
+                # Pillow 不可用：保留 PNG 原名，避免 .webp 名存 PNG 字节导致浏览器拒绝解码
+                saved_path = SCREENSHOTS_DIR / f"{TODAY}.png"
+                shutil.move(tmp, saved_path)
 
-            size_kb = today_path.stat().st_size / 1024
-            print(f"  [ok] {TODAY}.webp ({size_kb:.0f}KB)")
+            size_kb = saved_path.stat().st_size / 1024
+            print(f"  [ok] {saved_path.name} ({size_kb:.0f}KB)")
 
         except Exception as e:
             print(f"  [FAIL] screenshot: {e}", file=sys.stderr)
             sys.exit(1)
 
-    # 与前一天对比
-    prev_entry = manifest[-1] if manifest else None
+    # 与前一天（非今天）对比 — 避免同一天重复运行与自身比较、禁用变动检测
+    prev_entry = None
+    for e in reversed(manifest):
+        if e.get("date") != TODAY:
+            prev_entry = e
+            break
+
+    existing_idx = next((i for i, e in enumerate(manifest) if e.get("date") == TODAY), None)
     change_detected = False
     diff_pct = 0.0
 
     if prev_entry:
         prev_path = SCREENSHOTS_DIR / prev_entry["file"]
-        if prev_path.exists():
-            diff = compare_images(prev_path, today_path)
+        if prev_path.exists() and saved_path.exists():
+            diff = compare_images(prev_path, saved_path)
             if diff < 0:
                 print(f"  [warn] PIL not available, using file size comparison")
                 # 简单文件大小比较
-                size_ratio = abs(today_path.stat().st_size - prev_path.stat().st_size) / max(prev_path.stat().st_size, 1)
+                size_ratio = abs(saved_path.stat().st_size - prev_path.stat().st_size) / max(prev_path.stat().st_size, 1)
                 diff_pct = size_ratio * 100
                 change_detected = size_ratio > 0.05  # 5% 文件大小变化阈值
             else:
@@ -127,14 +141,18 @@ def main():
     else:
         print(f"  [info] first screenshot, no baseline")
 
-    # 更新 manifest
+    # 更新 manifest：今天已存在则原位更新，不重复追加
     today_info = {
         "date": TODAY,
-        "file": f"{TODAY}.webp",
+        "file": saved_path.name,
         "changed": change_detected,
         "diff_pct": round(diff_pct, 2),
     }
-    manifest.append(today_info)
+    if existing_idx is not None:
+        manifest[existing_idx] = today_info
+        print(f"  [update] 覆盖 manifest 中 {TODAY} 的记录")
+    else:
+        manifest.append(today_info)
     save_manifest(manifest)
 
     # 输出 JSON 供 workflow 使用
