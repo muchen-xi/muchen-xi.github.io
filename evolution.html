@@ -241,21 +241,21 @@ footer a:hover{color:#a0a0ff}
 <div class="stats-grid">
   <div class="stat-card">
     <span class="stat-icon g1">&#x1F4CA;</span>
-    <div class="stat-num">227</div>
+    <div class="stat-num">219</div>
     <div class="stat-label">累计 PV</div>
     <div class="stat-sub">30天 · www 站点</div>
   </div>
   <div class="stat-card">
     <span class="stat-icon g2">&#x1F52C;</span>
-    <div class="stat-num">10</div>
+    <div class="stat-num">0</div>
     <div class="stat-label">IP 优选次数</div>
     <div class="stat-sub">自动优选 + 分线路更新</div>
   </div>
   <div class="stat-card">
     <span class="stat-icon g3">&#x26A1;</span>
-    <div class="stat-num">12</div>
+    <div class="stat-num">0</div>
     <div class="stat-label">容灾触发次数</div>
-    <div class="stat-sub">备份 7 次 · 恢复 5 次</div>
+    <div class="stat-sub">备份 0 次 · 恢复 0 次</div>
   </div>
   <div class="stat-card">
     <span class="stat-icon g4">&#x1F4C5;</span>
@@ -265,7 +265,7 @@ footer a:hover{color:#a0a0ff}
   </div>
   <div class="stat-card">
     <span class="stat-icon g5">&#x1F4DD;</span>
-    <div class="stat-num">162</div>
+    <div class="stat-num">166</div>
     <div class="stat-label">Git 提交</div>
     <div class="stat-sub">累计 commits</div>
   </div>
@@ -327,6 +327,24 @@ footer a:hover{color:#a0a0ff}
 <div class="timeline">
 <div class="timeline-item">
   <div class="time-label">2026-08-01</div>
+  <div class="time-title">security: remove hardcoded BEARER_TOKEN from _middleware.js, read env.COUNTER_SHARED_SECRET</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">fbe6b96</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-08-01</div>
+  <div class="time-title">chore: 清理陈旧 logs/ — 06-26/27 死数据（迁移后 evolution 已改读 monitoring/logs/）</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">264f546</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-08-01</div>
+  <div class="time-title">refactor: 轻合并 — cf-ip-optimizer 监控系统迁入 monitoring/</div>
+  <div class="time-desc">by m2008</div>
+  <div class="time-hash">b8b0ba0</div>
+</div>
+<div class="timeline-item">
+  <div class="time-label">2026-08-01</div>
   <div class="time-title">chore: worker/counter.js + worker/health.js 标记已废弃（P0后解构，代码层已不引用）</div>
   <div class="time-desc">by m2008</div>
   <div class="time-hash">8265fc8</div>
@@ -379,27 +397,15 @@ footer a:hover{color:#a0a0ff}
   <div class="time-desc">by m2008</div>
   <div class="time-hash">67fc30d</div>
 </div>
-<div class="timeline-item">
-  <div class="time-label">2026-07-01</div>
-  <div class="time-title">fix: wrangler.toml 添加 name 字段以支持 pages deploy</div>
-  <div class="time-desc">by m2008</div>
-  <div class="time-hash">3d6b86b</div>
-</div>
-<div class="timeline-item">
-  <div class="time-label">2026-07-01</div>
-  <div class="time-title">cleanup: 移除临时 CF 自动化 workflow（CF_API_TOKEN 权限不足）</div>
-  <div class="time-desc">by m2008</div>
-  <div class="time-hash">74eea16</div>
-</div>
 </div>
 
 <div class="stats-bar">
   <span>里程碑: <span class="num">6</span></span>
-  <span>提交记录: <span class="num">11</span></span>
+  <span>提交记录: <span class="num">12</span></span>
 </div>
 
 <footer>
-  <p>自动生成于 2026-08-01 02:07:46 CST · <a href="https://github.com/muchen-xi/muchen-xi.github.io">GitHub</a></p>
+  <p>自动生成于 2026-08-01 12:10:42 CST · <a href="https://github.com/muchen-xi/muchen-xi.github.io">GitHub</a></p>
   <p style="margin-top:4px">数据来源: Counter API · 本地日志 · Git History · Powered by GitHub Actions</p>
 </footer>
 <!-- history 页 PV 埋点：每次重新生成都必须保留，否则 history 停止计数 -->
