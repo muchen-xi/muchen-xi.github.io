@@ -5,6 +5,11 @@
 //   Variable name: SITE_ANALYTICS
 //   KV namespace:  SITE_ANALYTICS (132f0237e83845caa4325effad690cee)
 //
+// Secret binding required (Bearer token for /_report_stats — no hardcoded token):
+//   Pages → 248200-xyz → Settings → Bindings → Secret
+//   Variable name: COUNTER_SHARED_SECRET
+//   Value must match GitHub Actions secret COUNTER_SHARED_SECRET (report_mailer reads it)
+//
 // This middleware handles:
 //   1. /ping          — PV counter (direct KV write, sendBeacon + img fallback)
 //   2. /_report_stats — read PV data (Bearer auth, JSON)
@@ -13,8 +18,6 @@
 //
 // The separate functions/ping.js and functions/_report_stats.js are now dead code
 // (middleware returns a response directly without calling next()) and can be deleted.
-
-const BEARER_TOKEN = '207ddbc0c5376668adb2f5c225fae18ed0859c3cf86865ab';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -116,7 +119,7 @@ async function handlePing(request, KV) {
 }
 
 /** JSON report of PV counts — public for health.chenxiuniverse.top, Bearer for others. */
-async function handleReportStats(request, KV) {
+async function handleReportStats(request, KV, secret) {
   const url = new URL(request.url);
 
   // ---- auth gate: skip for internal health panel, require Bearer for external ----
@@ -127,9 +130,10 @@ async function handleReportStats(request, KV) {
     hostname === 'health.chenxiuniverse.top' ||
     hostname.startsWith('localhost') || hostname.startsWith('127.0.0.1') ||
     /\/health(\/|$)/.test(referer);
+  // secret 未配置（binding 缺失）时一律拒绝外部访问 —— deny by default
   if (!isInternal) {
     const auth = request.headers.get('Authorization');
-    if (!auth || auth !== `Bearer ${BEARER_TOKEN}`) {
+    if (!secret || !auth || auth !== `Bearer ${secret}`) {
       return new Response('Not Found', { status: 404 });
     }
   }
@@ -201,7 +205,7 @@ export async function onRequest(context) {
 
   // ---- /_report_stats — internal PV report (must be before domain routing) ----
   if (url.pathname === '/_report_stats') {
-    return handleReportStats(request, KV);
+    return handleReportStats(request, KV, env.COUNTER_SHARED_SECRET);
   }
 
   // ---- Domain-based routing (preserved from original middleware) ----
