@@ -7,3 +7,4 @@ __pycache__/
 result.csv
 china_result.csv
 valid_*.csv
+monitoring/logs/report_*.html
