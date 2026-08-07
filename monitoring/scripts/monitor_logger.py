@@ -86,9 +86,11 @@ def cmd_failover_check():
     update_stats("checks_total")
     if status == "fail":
         update_stats("checks_failed")
+    elif status == "missed":
+        update_stats("checks_missed")
 
-    # 只在故障时写独立事件（减少文件堆积）
-    if status == "fail":
+    # 只在故障/漏检时写独立事件（减少文件堆积）
+    if status in ("fail", "missed"):
         data = {"status": status}
         if http_code:
             data["http_code"] = int(http_code) if http_code.isdigit() else http_code
