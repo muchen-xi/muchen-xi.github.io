@@ -25,8 +25,34 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-const RATE_LIMIT_MAX = 120;
+const RATE_LIMIT_MAX = 60;
 const RATE_LIMIT_TTL = 120; // seconds (2 min — covers the 1-min window with buffer)
+
+// 已知恶意/脚本 UA 黑名单（忽略大小写）。命中直接 403，不消耗任何 KV 配额。
+const BLOCKED_UA_SUBSTR = [
+  'aiohttp',
+  'python-requests',
+  'python-urllib',
+  'httpx',
+  'go-http-client',
+  'libwww-perl',
+  'scrapy',
+  'curl',
+  'wget',
+  'sqlmap',
+  'nikto',
+  'masscan',
+  'nmap',
+  'zgrab',
+  'zgrab2',
+  'hydra',
+];
+
+function isBlockedUA(request) {
+  const ua = (request.headers.get('User-Agent') || '').toLowerCase();
+  if (!ua) return false; // 空 UA 由 block-empty-ua / 下方空 UA 规则处理
+  return BLOCKED_UA_SUBSTR.some((s) => ua.includes(s));
+}
 
 // 1×1 transparent GIF (43 bytes, hardcoded — no atob dependency)
 const PIXEL_GIF = new Uint8Array([
@@ -191,6 +217,17 @@ export async function onRequest(context) {
   // ---- CORS preflight ----
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders() });
+  }
+
+  // ---- 恶意/脚本 UA 黑名单（对全站生效，包括 /ping /_report_stats）----
+  if (isBlockedUA(request)) {
+    return new Response('Forbidden', { status: 403, headers: corsHeaders({ 'Content-Type': 'text/plain' }) });
+  }
+
+  // ---- 空 UA 拦截（浏览器/健康检查不可能无 UA）----
+  const ua = (request.headers.get('User-Agent') || '').trim();
+  if (!ua) {
+    return new Response('Forbidden', { status: 403, headers: corsHeaders({ 'Content-Type': 'text/plain' }) });
   }
 
   // ---- /ping — PV counter (must be before domain routing) ----
