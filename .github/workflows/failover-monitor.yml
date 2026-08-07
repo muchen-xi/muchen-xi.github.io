@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '*/5 * * * *'     # 每5分钟
   workflow_dispatch:            # 手动触发
+    inputs:
+      compensate:
+        description: '补检模式（上次例行检查因 runner 不可用被放弃时，由补检守卫触发）'
+        required: false
+        type: boolean
 
 concurrency:
   group: failover-monitor       # 串行化，避免 schedule 与手动触发并发读写计数
@@ -129,6 +134,12 @@ jobs:
         env:
           ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
           ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+
+      - name: 记录漏检补检
+        if: always() && github.event.inputs.compensate == 'true'
+        run: |
+          echo "⚠️ 上次例行检查因 runner 不可用被放弃，本次为补检"
+          python3 monitoring/scripts/monitor_logger.py failover-check --status missed
 
       - name: 记录监控事件
         if: always()

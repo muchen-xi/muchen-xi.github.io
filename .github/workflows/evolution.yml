@@ -3,7 +3,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '37 16 * * *'  # 每天 UTC 16:37 = 北京时间 00:37
+    - cron: '37 4 * * *'  # 每天 UTC 04:37 = 北京时间 12:37（避开美东早高峰 runner 排队）
   workflow_dispatch:  # 手动触发
 
 jobs:
