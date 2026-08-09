@@ -58,6 +58,7 @@ def check_ip(ip: str, target: str) -> dict | None:
                 "--resolve", f"{target}:443:{ip}",
                 "--connect-timeout", "10",
                 "--max-time", str(TIMEOUT),
+                "-A", "HealthCheckBot/1.0",
                 f"https://{target}/",
             ],
             capture_output=True, text=True, timeout=TIMEOUT + 5,

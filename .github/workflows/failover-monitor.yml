@@ -47,11 +47,11 @@ jobs:
             MAIN_IP=$(python3 -c "import json;print(json.load(open('monitoring/.failover_state.json')).get('www',[''])[0])" 2>/dev/null || true)
             if [ -n "$MAIN_IP" ]; then
               echo "backup 模式 — 直连主站 IP $MAIN_IP 检测"
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" --resolve www.chenxiuniverse.top:443:$MAIN_IP --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null)
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "HealthCheckBot/1.0" --resolve www.chenxiuniverse.top:443:$MAIN_IP --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null)
             fi
           fi
           if [ -z "$STATUS" ]; then
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "HealthCheckBot/1.0" --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null)
           fi
           STATUS=${STATUS:-000}
           echo "status=$STATUS" >> $GITHUB_OUTPUT
