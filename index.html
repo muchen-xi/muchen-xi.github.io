@@ -267,9 +267,8 @@
                 <div class="s-cmb-hd a-elem">
                   <div class="intro-r">
                     <div class="intro-t">
-                      <h2>这里是我的小世界</h2>
-                      <p>一个喜欢折腾代码的高中生。<br>偶尔写点数学建模的东西，听歌听到停不下来。</p>
-                      <div class="bio-tag">在学 <strong>Python</strong>、<strong>ESP32</strong>，偶尔碰一下 <strong>深度学习</strong></div>
+                      <h2>晨曦</h2>
+                      <p>高中生，喜欢折腾代码和硬件。<br>最近在做能耗建模，听歌听到停不下来。</p>
                     </div>
                     <div style="flex-shrink:0"><img class="qc" src="q-glow.webp" alt="晨曦" /></div>
                   </div>
@@ -278,13 +277,13 @@
                   <div class="ac-tt">天气 · <span class="lb" id="lb">定位中</span></div>
                   <div class="cp" id="cp"><div class="cg" id="cg"></div></div>
                   <div class="wg">
-                    <div class="wi"><div class="l">🌡 温度</div><div class="v" id="t1">--</div></div>
-                    <div class="wi"><div class="l">🤔 体感</div><div class="v" id="t2">--</div></div>
-                    <div class="wi"><div class="l">☁️ 云量</div><div class="v" id="t3">--</div></div>
-                    <div class="wi"><div class="l">💧 湿度</div><div class="v" id="t4">--</div></div>
-                    <div class="wi"><div class="l">🌬 风速</div><div class="v" id="t5">--</div></div>
+                    <div class="wi"><div class="l">温度</div><div class="v" id="t1">--</div></div>
+                    <div class="wi"><div class="l">体感</div><div class="v" id="t2">--</div></div>
+                    <div class="wi"><div class="l">云量</div><div class="v" id="t3">--</div></div>
+                    <div class="wi"><div class="l">湿度</div><div class="v" id="t4">--</div></div>
+                    <div class="wi"><div class="l">风速</div><div class="v" id="t5">--</div></div>
                   </div>
-                  <div class="ab"><div class="abt">观星建议</div><p id="adT">正在计算星空指数...</p></div>
+                  <div class="ab"><div class="abt">今晚适合看星星吗</div><p id="adT">算一算...</p></div>
                 </div>
                 <!-- AWARDS -->
                 <div class="ac a-elem" style="margin-top:5px">
@@ -329,22 +328,26 @@
               <div class="s-scroll">
                 <div class="s-cmb-hd a-elem">
                   <div class="s-t">编程</div>
-                  <div class="s-st">做东西的时候最有意思</div>
                 </div>
                 <div class="pc a-elem">
-                  <div class="ph">树莓派智能小车 <span class="pb">区二等奖</span></div>
-                  <div class="pd">第一个完整的硬件项目。Pi Pico 控制电机和舵机，超声波避障。<br>调 PWM 占空比调了好久才让它走直线。</div>
-                  <div class="pt"><span>Pi Pico</span><span>MicroPython</span><span>PWM</span></div>
+                  <div class="ph">树莓派智能小车</div>
+                  <div class="pd">用 Pi Pico 控制电机和舵机，加了超声波避障。调了好久的 PWM 占空比才让它走直线。</div>
                 </div>
                 <div class="pc a-elem">
-                  <div class="ph">校园天气助手 <span class="pb">区二等奖</span></div>
-                  <div class="pd">ESP32 + OLED 显示屏，能看实时天气和血氧。<br>自己写了个中文点阵字库，现在想想还挺折腾的。</div>
-                  <div class="pt"><span>ESP32</span><span>OLED</span><span>MAX30102</span></div>
+                  <div class="ph">校园天气助手</div>
+                  <div class="pd">ESP32 + OLED 屏幕，自己写了中文点阵字库。现在想想挺折腾的。</div>
                 </div>
                 <div class="pc a-elem">
-                  <div class="ph">Python 作品集</div>
-                  <div class="pd">五子棋 AI、下棋机器人、PyGame 游戏、爬虫。<br>从 "print hello world" 到能跑的东西，大概用了半年。</div>
-                  <div class="pt"><span>Python</span><span>PyGame</span><span>爬虫</span></div>
+                  <div class="ph">五子棋 AI + 下棋机器人</div>
+                  <div class="pd">用 Python 写的，从零开始，挺好玩的。</div>
+                </div>
+                <div class="pc a-elem">
+                  <div class="ph">PyGame 游戏</div>
+                  <div class="pd">做过几个小游戏，练手用的。</div>
+                </div>
+                <div class="pc a-elem">
+                  <div class="ph">爬虫</div>
+                  <div class="pd">抓过一些数据，学了点反爬。</div>
                 </div>
               </div>
               <button class="sc-b" data-sc="1">▶</button>
@@ -359,24 +362,18 @@
               <button class="sc-b" data-sc="-1">◀</button>
               <div class="s-scroll">
                 <div class="s-cmb-hd a-elem">
-                  <div class="s-t">数学 · 能耗建模</div>
-                  <div class="s-st">校企合作做的一个项目，挺有意思的</div>
+                  <div class="s-t">数学</div>
                 </div>
                 <div class="pc a-elem">
-                  <div class="ph">做了什么</div>
-                  <div class="pd">帮企业算空气源热泵的能耗效率。测了 83 组数据，用 Python 跑回归分析，R² 都在 0.98 以上。</div>
+                  <div class="ph">校企合作项目</div>
+                  <div class="pd">帮企业算空气源热泵的能耗效率。测了 83 组数据，用 Python 跑回归分析。</div>
                 </div>
                 <div class="pc a-elem">
                   <div class="ph">COP 模型</div>
                   <div class="pd">
                     <div class="fml"><strong>COP</strong> = 0.00035510·T<sub>env</sub>² + 0.0578·T<sub>env</sub> − 0.0637·T<sub>out</sub> + 6.0284</div>
-                    最后拿去工程楼验证，误差 1.2%，还挺准的。
+                    拿去工程楼验证，误差 1.2%，挺准的。
                   </div>
-                </div>
-                <div class="pc a-elem">
-                  <div class="ph">用到的工具</div>
-                  <div class="pd">Python + pandas + numpy，模型跑起来比 Excel 快多了。</div>
-                  <div class="pt"><span>Python</span><span>pandas</span><span>numpy</span></div>
                 </div>
               </div>
               <button class="sc-b" data-sc="1">▶</button>
@@ -392,23 +389,17 @@
               <div class="s-scroll">
                 <div class="s-cmb-hd a-elem">
                   <div class="s-t">音乐</div>
-                  <div class="s-st">听歌是我的续命方式</div>
-                  <div class="sr">
-                    <div class="sb"><div class="sn">~70%</div><div class="sl">术力口</div></div>
-                    <div class="sb"><div class="sn">∞</div><div class="sl">旋律控</div></div>
-                    <div class="sb"><div class="sn">3x</div><div class="sl">多版本</div></div>
-                  </div>
                 </div>
                 <div class="mb a-elem">
-                  <div class="ml">术力口（VOCALOID）</div>
-                  初音未来、洛天依、重音テト。千本桜、深海少女、World is Mine——旋律太上头了。
+                  <div class="ml">VOCALOID</div>
+                  初音未来、洛天依、重音テト。千本桜、深海少女、World is Mine。
                 </div>
                 <div class="mb a-elem">
                   <div class="ml">草东 &amp; 万青</div>
-                  《烂泥》《但》《大石碎胸口》，从压抑到爆发，一首歌完成一次精神排毒。
+                  《烂泥》《但》《大石碎胸口》，从压抑到爆发。
                 </div>
                 <div class="mb a-elem">
-                  <div class="ml">Nightcore + Sped Up</div>
+                  <div class="ml">Nightcore</div>
                   同一首歌听三个版本，加速版越听越上头。
                 </div>
                 <div class="mb a-elem">
@@ -416,8 +407,8 @@
                   琵琶行、咏春、游山恋——戏腔 + 民乐，一听就起鸡皮疙瘩。
                 </div>
                 <div class="mb a-elem">
-                  <div class="ml">世界音乐</div>
-                  乌克兰 SadSvit、俄语 EDM、英语 indie、日语 band sound。<br>好旋律不需要翻译。
+                  <div class="ml">其他</div>
+                  乌克兰 SadSvit、俄语 EDM、英语 indie、日语 band sound。好旋律不需要翻译。
                 </div>
               </div>
               <button class="sc-b" data-sc="1">▶</button>
@@ -452,27 +443,22 @@
     <div class="fut-stars" id="futStars"></div>
     <div class="future-inner">
       <div class="fut-h">接下来</div>
-      <div class="fut-st">想做的事情还挺多的</div>
       <div class="fut-grid" id="futGrid">
         <div class="fut-card" onclick="location.href='topic.html?t=ai-ml'">
           <div class="fut-title">深度学习</div>
-          <div class="fut-desc">现在在学 PyTorch，<br>想试试用 LSTM 做时序预测，<br>看看能不能用在能耗模型上。</div>
-          <div class="fut-tags"><span class="fut-tag">PyTorch</span><span class="fut-tag">LSTM</span></div>
+          <div class="fut-desc">在学 PyTorch，想试试用 LSTM 做时序预测。</div>
         </div>
         <div class="fut-card" onclick="location.href='topic.html?t=iot'">
           <div class="fut-title">IoT</div>
-          <div class="fut-desc">ESP32 玩得差不多了，<br>想搞个传感器网络，<br>用 MQTT 把数据传到服务器上。</div>
-          <div class="fut-tags"><span class="fut-tag">ESP32</span><span class="fut-tag">MQTT</span></div>
+          <div class="fut-desc">ESP32 玩得差不多了，想搞个传感器网络。</div>
         </div>
         <div class="fut-card" onclick="location.href='topic.html?t=game-dev'">
           <div class="fut-title">游戏</div>
-          <div class="fut-desc">五子棋 AI 做完之后，<br>想用 PyGame 做个正经的小游戏，<br>可能是个 roguelike。</div>
-          <div class="fut-tags"><span class="fut-tag">PyGame</span><span class="fut-tag">Game Dev</span></div>
+          <div class="fut-desc">想用 PyGame 做个 roguelike。</div>
         </div>
         <div class="fut-card" onclick="location.href='topic.html?t=content-creation'">
           <div class="fut-title">B站</div>
-          <div class="fut-desc">「晨曦的宇宙」还在更新。<br>分享编程和创客项目，<br>虽然剪辑很慢就是了。</div>
-          <div class="fut-tags"><span class="fut-tag">Bilibili</span></div>
+          <div class="fut-desc">还在更新，虽然剪辑很慢。</div>
         </div>
       </div>
     </div>
