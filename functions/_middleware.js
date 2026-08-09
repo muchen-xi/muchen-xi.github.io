@@ -51,7 +51,7 @@ const BLOCKED_UA_SUBSTR = [
 // 自家监控/验证脚本 UA 白名单 —— 在黑名单判断前显式放行，防止误伤。
 // 与 monitoring/scripts/health_check.py、failover-monitor.yml 的 curl -A 保持一致。
 const ALLOWED_UA_SUBSTR = [
-  'healthcheckbot',
+  'chenxiuniverse-monitor',
 ];
 
 function isBlockedUA(request) {
