@@ -161,8 +161,8 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "m2008"
+          git config user.email "m2008@users.noreply.github.com"
           # monitoring/.failover_state.json 仅在 backup 后存在；git add 遇不存在路径会整体失败(exit 128)且不暂存任何文件，
           # 所以必须分开 add，否则 monitoring/.failover_count.json 状态永远无法持久化
           git add monitoring/logs/ monitoring/.failover_count.json 2>/dev/null || true
