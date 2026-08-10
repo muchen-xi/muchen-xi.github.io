@@ -322,5 +322,11 @@
     "file": "2026-08-09.webp",
     "changed": false,
     "diff_pct": 0.01
+  },
+  {
+    "date": "2026-08-10",
+    "file": "2026-08-10.webp",
+    "changed": true,
+    "diff_pct": 22.84
   }
 ]
