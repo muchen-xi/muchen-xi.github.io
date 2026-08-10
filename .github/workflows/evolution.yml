@@ -503,8 +503,8 @@ jobs:
 
       - name: Commit evolution.html
         run: |
-          git config user.name "m2008"
-          git config user.email "m2008@users.noreply.github.com"
+          git config user.name "muchen-xi"
+          git config user.email "134781235+muchen-xi@users.noreply.github.com"
           git add evolution.html screenshots/
           git diff --staged --quiet || git commit -m "📅 更新网页进化史 [skip ci]"
           git push
