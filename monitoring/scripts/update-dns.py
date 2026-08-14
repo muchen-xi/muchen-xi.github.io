@@ -26,6 +26,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
 from alibabacloud_alidns20150109.client import Client as AlidnsClient
 from alibabacloud_alidns20150109 import models as alidns_models
@@ -58,6 +59,20 @@ RECORD_ID_ENV_MAP = {
     ("history", "default"): "RECORD_IDS_HISTORY_DEFAULT",
     ("history", "oversea"): "RECORD_IDS_HISTORY_OVERSEA",
 }
+
+
+# 容灾切换目标（mode=backup 时跳过，避免覆盖容灾 DNS 切换）
+FAILOVER_TARGETS = {"www", "pimanager"}
+
+
+def is_failover_backup() -> bool:
+    """容灾备份模式检测：读取 .failover_count.json，mode=backup 时跳过容灾目标更新。"""
+    state_path = Path(__file__).resolve().parent.parent / ".failover_count.json"
+    try:
+        d = json.loads(state_path.read_text(encoding="utf-8"))
+        return d.get("mode") == "backup"
+    except Exception:
+        return False
 
 
 def read_ips(csv_path: str, top_n: int = TOP_N) -> list[str]:
@@ -218,6 +233,11 @@ def main():
     print(f"境外优选 IP ({len(overseas_ips)}): {overseas_ips}")
     print(f"境内优选 IP ({len(china_ips)}): {china_ips}")
 
+    # 容灾备份模式保护：跳过容灾目标，避免 IP 优选把 DNS 切回主站破坏容灾
+    backup_mode = is_failover_backup()
+    if backup_mode:
+        print("⚠ 检测到容灾备份模式 (mode=backup) — 跳过 www/pimanager 更新，避免破坏容灾切换")
+
     if dry_run:
         print("⚠ DRY RUN 模式 — 不会实际修改 DNS\n")
 
@@ -252,6 +272,10 @@ def main():
         rr = target["rr"]
         line = target["line"]
         csv_source = target["csv"]
+
+        if backup_mode and rr in FAILOVER_TARGETS:
+            print(f"⚠ {rr}.{DOMAIN} ({line}): 容灾备份模式，跳过（保护容灾切换）")
+            continue
 
         ips = china_ips if csv_source == "china" else overseas_ips
         if not ips:
