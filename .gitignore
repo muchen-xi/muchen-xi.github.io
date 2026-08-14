@@ -10,3 +10,5 @@ valid_*.csv
 monitoring/logs/report_*.html
 .zcode/
 .playwright-mcp/
+.vercel/
+.vercel

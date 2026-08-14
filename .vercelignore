@@ -1,0 +1,15 @@
+.vercelignore
+.zcode/
+.playwright-mcp/
+content/ops/
+monitoring/logs/
+.wrangler/
+.claude/
+__pycache__/
+*.pyc
+result.csv
+china_result.csv
+valid_*.csv
+.DS_Store
+Thumbs.db
+*.tmp
