@@ -8,3 +8,5 @@ result.csv
 china_result.csv
 valid_*.csv
 monitoring/logs/report_*.html
+.zcode/
+.playwright-mcp/

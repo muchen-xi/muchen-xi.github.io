@@ -2,7 +2,7 @@
 DNS 容灾切换脚本 — A 记录架构版
 
 用法:
-  python3 failover-dns.py backup      切换 www default A → GH Pages IPs (备站)
+  python3 failover-dns.py backup      切换 www default A → Vercel IPs (备站)
   python3 failover-dns.py restore     恢复 www default A → CF 优选 IPs (主站)
   python3 failover-dns.py status      查看当前 DNS 状态
   python3 failover-dns.py backup --pimanager --dry-run
@@ -19,10 +19,10 @@ DNS 架构 (post CF Pages 迁移):
 
 容灾策略:
   - PRIMARY (正常):  www default A → CF优选IPs → CF Pages
-  - BACKUP (容灾):   www default A → GH Pages IPs → GitHub Pages
+  - BACKUP (容灾):   www default A → Vercel anycast IP → Vercel 备用站
   - oversea 线路不受影响
   - root @ 记录不变
-  - pimanager 可选容灾 (--pimanager)
+  - pimanager 可选容灾 (--pimanager)，仍切 GH Pages IP（Vercel 未绑定 pimanager 域名）
 
 状态文件:
   .failover_state.json  保存 backup 前的原始 A 记录 IP，restore 时读取。
@@ -42,13 +42,21 @@ from alibabacloud_tea_openapi import models as open_api_models
 DOMAIN = "chenxiuniverse.top"
 TTL = 600
 
-# GitHub Pages 已知 IP 段 (Fastly CDN)
+# GitHub Pages 已知 IP 段 (Fastly CDN) — 现仅用于 pimanager 目标与旧状态识别
 GH_PAGES_IPS = [
     "185.199.108.153",
     "185.199.109.153",
     "185.199.110.153",
     "185.199.111.153",
 ]
+
+# Vercel 备用站 anycast IP（第三方 DNS 下 A 记录指向此 IP）
+VERCEL_IPS = [
+    "76.76.21.21",
+]
+
+# 容灾目标：www 切到 Vercel；pimanager 仍切 GH Pages（Vercel 项目未绑定 pimanager 域）
+BACKUP_IPS = VERCEL_IPS
 
 # 如果状态文件丢失，restore 时用这些已知可用的 CF IP 兜底
 FALLBACK_CF_IPS = [
@@ -207,13 +215,13 @@ def update_to_ips(
 def detect_state(ips: list[str]) -> str:
     """根据 IP 列表判断当前是 PRIMARY / BACKUP / MIXED。"""
     ips_set = set(ips)
-    gh_set = set(GH_PAGES_IPS)
+    backup_set = set(BACKUP_IPS) | set(GH_PAGES_IPS)  # Vercel 或 GH Pages 都属于备站
 
     if not ips_set:
         return "EMPTY"
 
-    if ips_set & gh_set:
-        if ips_set.issubset(gh_set):
+    if ips_set & backup_set:
+        if ips_set.issubset(backup_set):
             return "BACKUP"
         else:
             return "MIXED"
@@ -272,7 +280,7 @@ def cmd_backup(
     dry_run: bool = False,
     include_pimanager: bool = False,
 ) -> None:
-    """切换到备站: 将 default 线路 A 记录指向 GH Pages IPs。"""
+    """切换到备站: www default A → Vercel 备用站 IP；pimanager → GH Pages IPs。"""
     targets = FAILOVER_TARGETS if include_pimanager else FAILOVER_TARGETS[:1]
 
     # 1. 幂等保护：若目标子域已是备站/混合状态，拒绝覆盖状态文件（否则原始 CF IP 永久丢失）
@@ -313,21 +321,23 @@ def cmd_backup(
 
         print(f"\n  {rr}.{DOMAIN} ({line}):")
         print(f"    当前: {current_ips}")
-        print(f"    目标: {GH_PAGES_IPS}")
+        # www -> Vercel 备站；pimanager -> GH Pages（现状不变）
+        target_ips = BACKUP_IPS if rr == "www" else GH_PAGES_IPS
+        print(f"    目标: {target_ips}")
 
-        if update_to_ips(client, rr, line, GH_PAGES_IPS, dry_run):
+        if update_to_ips(client, rr, line, target_ips, dry_run):
             changed_any = True
             if dry_run:
-                print(f"    [DRY RUN] 将切换 {rr} -> GH Pages IPs")
+                print(f"    [DRY RUN] 将切换 {rr} -> {target_ips}")
             else:
-                print(f"    OK {rr} 已切到 GH Pages (备站)")
+                print(f"    OK {rr} 已切到备站")
         else:
             print(f"    (已是备站，跳过)")
 
     if dry_run:
         print(f"\n⚠ DRY RUN 完成 — 未实际修改 DNS")
     elif changed_any:
-        print(f"\nOK DNS 已切到备站 (GitHub Pages) @ {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"\nOK DNS 已切到备站 (Vercel) @ {time.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
         print(f"\n  无需变更")
 
@@ -393,7 +403,7 @@ def print_usage() -> None:
     print("  --pimanager    同时切换 pimanager 子域（默认仅 www）")
     print()
     print("命令:")
-    print("  backup   切换到备站 (www default A -> GH Pages IPs)")
+    print("  backup   切换到备站 (www default A -> Vercel IPs)")
     print("  restore  恢复到主站 (www default A -> 保存的 CF 优选 IPs)")
     print("  status   查看当前 DNS 容灾状态")
     sys.exit(1)

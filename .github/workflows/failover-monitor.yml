@@ -62,6 +62,20 @@ jobs:
             echo "healthy=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: 检查备站可达性 (Vercel)
+        if: steps.state_file.outputs.mode == 'backup'
+        run: |
+          # backup 模式下 DNS 已指向 Vercel，普通 curl 检测备站可达性（仅观测告警，不触发任何切换）
+          BACKUP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null)
+          BACKUP_STATUS=${BACKUP_STATUS:-000}
+          echo "备站(www -> Vercel)状态码: $BACKUP_STATUS"
+          if [ "$BACKUP_STATUS" -ge 200 ] 2>/dev/null && [ "$BACKUP_STATUS" -lt 500 ] 2>/dev/null; then
+            echo "备站可达"
+          else
+            echo "::warning::备站不可达 (HTTP $BACKUP_STATUS) — 仅记录，不触发切换"
+            python3 monitoring/scripts/monitor_logger.py failover-check --status fail --http-code "$BACKUP_STATUS"
+          fi
+
       - name: 更新计数并决策
         id: decision
         run: |
