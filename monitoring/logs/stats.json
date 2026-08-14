@@ -294,7 +294,7 @@
     "restore_count": 0
   },
   "2026-08-14": {
-    "checks_total": 29,
+    "checks_total": 30,
     "checks_failed": 3,
     "backup_count": 1,
     "restore_count": 1,
