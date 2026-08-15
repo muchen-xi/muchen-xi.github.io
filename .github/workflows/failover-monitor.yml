@@ -39,6 +39,9 @@ jobs:
 
       - name: 检查主站健康
         id: check
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
         run: |
           MODE="${{ steps.state_file.outputs.mode }}"
           STATUS=""
@@ -51,6 +54,17 @@ jobs:
             fi
           fi
           if [ -z "$STATUS" ]; then
+            # primary 模式：权威 API(line=default) 取当前 A 记录 + --resolve 直连检测。
+            # 不经递归 DNS — 防 DNS 层攻击/递归缓存失明，且境外 runner 不再误检 oversea 线路
+            # （2026-08-15 黑洞演练实测：递归缓存 ≥60min，且境外解析命中 oversea 线路）
+            MAIN_IP=$(python3 monitoring/scripts/resolve_primary.py 2>/dev/null || true)
+            if [ -n "$MAIN_IP" ]; then
+              echo "primary 模式 — 权威解析 $MAIN_IP 直连检测（绕过递归缓存）"
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --resolve www.chenxiuniverse.top:443:$MAIN_IP --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null || true)
+            fi
+          fi
+          if [ -z "$STATUS" ]; then
+            echo "权威解析失败 — 回退普通 DNS 检测"
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null || true)
           fi
           STATUS=${STATUS:-000}
