@@ -18,19 +18,22 @@ DNS 架构 (post CF Pages 迁移):
   - @ (root)  → A records (GH Pages IPs, 不变)
 
 容灾策略:
-  - PRIMARY (正常):  www default A → CF优选IPs → CF Pages
-  - BACKUP (容灾):   www default A → Vercel anycast IP → Vercel 备用站
-  - oversea 线路不受影响
+  - PRIMARY (正常):  www default+oversea A → CF优选IPs → CF Pages
+  - BACKUP (容灾):   www default+oversea A → Vercel anycast IP → Vercel 备用站
   - root @ 记录不变
   - pimanager 可选容灾 (--pimanager)，仍切 GH Pages IP（Vercel 未绑定 pimanager 域名）
 
 状态文件:
   .failover_state.json  保存 backup 前的原始 A 记录 IP，restore 时读取。
   如果文件丢失，restore 使用内置 fallback CF IPs。
+  2026-08-15 演练修复：backup 时若状态文件已存在且有效则保留旧快照
+  （记录的是主站健康时的 IP），避免把"被攻击/黑洞"的当前记录存为恢复目标；
+  restore 前对 www 目标 IP 做健康校验，不可达的跳过/兜底，防止恢复回坏 IP。
 """
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -68,11 +71,17 @@ FALLBACK_CF_IPS = [
 # 状态文件路径（项目根目录）
 STATE_FILE = Path(__file__).resolve().parent.parent / ".failover_state.json"
 
-# 需要容灾的子域（仅 default 线路，oversea 不动）
+# 需要容灾的子域和线路（www 两条线路都切备；pimanager 仅 default）
 FAILOVER_TARGETS = [
     {"rr": "www", "line": "default"},
+    {"rr": "www", "line": "oversea"},
     {"rr": "pimanager", "line": "default"},
 ]
+
+
+def state_key(rr: str, line: str) -> str:
+    """状态文件里的 key：default 线路用 rr 本身，其他线路加后缀避免同名冲突。"""
+    return rr if line == "default" else f"{rr}_{line}"
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +238,33 @@ def detect_state(ips: list[str]) -> str:
     return "PRIMARY"
 
 
+def verify_ips(ips: list[str], host: str) -> list[str]:
+    """
+    健康校验：--resolve 直连 host:443:IP，HTTP <500 视为可用。
+    用于 restore 前过滤不可达/被污染的目标 IP（2026-08-15 演练缺口）。
+    """
+    ok: list[str] = []
+    for ip in ips:
+        try:
+            code = subprocess.run(
+                [
+                    "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                    "-A", "chenxiuniverse-monitor/1.0",
+                    "--resolve", f"{host}:443:{ip}",
+                    "--connect-timeout", "5", "--max-time", "8",
+                    f"https://{host}",
+                ],
+                capture_output=True, text=True, timeout=15,
+            ).stdout.strip()
+            if code.isdigit() and 200 <= int(code) < 500:
+                ok.append(ip)
+            else:
+                print(f"    ⚠ {ip} 健康校验失败 (HTTP {code or 'N/A'})，跳过")
+        except Exception as e:
+            print(f"    ⚠ {ip} 校验异常: {e}，跳过")
+    return ok
+
+
 # ---------------------------------------------------------------------------
 # 命令实现
 # ---------------------------------------------------------------------------
@@ -264,9 +300,11 @@ def cmd_status(client: AlidnsClient) -> None:
             print(f"    保存时间: {state_data.get('timestamp', '?')}")
             for target in FAILOVER_TARGETS:
                 rr = target["rr"]
-                saved = state_data.get(rr, [])
+                line = target["line"]
+                key = state_key(rr, line)
+                saved = state_data.get(key, [])
                 if saved:
-                    print(f"    保存的 {rr}: {saved}")
+                    print(f"    保存的 {rr} ({line}): {saved}")
         except Exception as e:
             print(f"    ⚠ 无法解析: {e}")
     else:
@@ -280,39 +318,55 @@ def cmd_backup(
     dry_run: bool = False,
     include_pimanager: bool = False,
 ) -> None:
-    """切换到备站: www default A → Vercel 备用站 IP；pimanager → GH Pages IPs。"""
-    targets = FAILOVER_TARGETS if include_pimanager else FAILOVER_TARGETS[:1]
+    """切换到备站: www default+oversea A → Vercel 备用站 IP；pimanager → GH Pages IPs。"""
+    targets = FAILOVER_TARGETS if include_pimanager else FAILOVER_TARGETS[:2]
 
-    # 1. 幂等保护：若目标子域已是备站/混合状态，拒绝覆盖状态文件（否则原始 CF IP 永久丢失）
+    # 1. 幂等保护：若目标子域+线路已是备站/混合状态，拒绝覆盖状态文件（否则原始 CF IP 永久丢失）
     for target in targets:
         rr = target["rr"]
         line = target["line"]
         current = get_current_ips(client, rr, line)
         st = detect_state(current)
         if st in ("BACKUP", "MIXED"):
-            print(f"❌ {rr}.{DOMAIN} 已是 {st} 状态，拒绝覆盖状态文件（原始 IP 可能已丢失）。", file=sys.stderr)
+            print(f"❌ {rr}.{DOMAIN} ({line}) 已是 {st} 状态，拒绝覆盖状态文件（原始 IP 可能已丢失）。", file=sys.stderr)
             print(f"   如需恢复请先执行 restore，或手动核对 DNS 后再处理。", file=sys.stderr)
             sys.exit(1)
 
-    # 1. 保存当前状态
+    # 2. 状态文件保护（2026-08-15 演练修复）：
+    #    已存在且有效则保留旧快照（记录的是主站健康时的 IP），
+    #    避免把"被攻击/黑洞"的当前记录存为恢复目标。
     from datetime import datetime, timezone
-    state: dict = {
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "action": "backup",
-    }
-    for target in targets:
-        rr = target["rr"]
-        line = target["line"]
-        state[rr] = get_current_ips(client, rr, line)
+    state: dict = {}
+    if STATE_FILE.exists():
+        try:
+            old = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            if isinstance(old, dict) and old.get("www") and old.get("www_oversea"):
+                state = old
+                print("💾 状态文件已存在且有效 — 保留旧快照（恢复目标不随被攻击的当前记录漂移）")
+            else:
+                print("⚠ 状态文件缺失关键线路快照，将重新保存当前记录", file=sys.stderr)
+        except Exception as e:
+            print(f"⚠ 状态文件解析失败 ({e})，将重新保存当前记录", file=sys.stderr)
+    if not state:
+        state = {
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "action": "backup",
+        }
+        for target in targets:
+            rr = target["rr"]
+            line = target["line"]
+            state[state_key(rr, line)] = get_current_ips(client, rr, line)
 
     if dry_run:
         print(f"💾 [DRY RUN] 将保存状态到 {STATE_FILE}")
         print(f"   {json.dumps(state, indent=2)}")
     else:
+        state["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state["action"] = "backup"
         STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"💾 状态已保存到 {STATE_FILE}")
 
-    # 2. 切换到 GH Pages IPs
+    # 3. 切换：www 两条线路 -> Vercel 备站；pimanager -> GH Pages
     changed_any = False
     for target in targets:
         rr = target["rr"]
@@ -321,16 +375,15 @@ def cmd_backup(
 
         print(f"\n  {rr}.{DOMAIN} ({line}):")
         print(f"    当前: {current_ips}")
-        # www -> Vercel 备站；pimanager -> GH Pages（现状不变）
         target_ips = BACKUP_IPS if rr == "www" else GH_PAGES_IPS
         print(f"    目标: {target_ips}")
 
         if update_to_ips(client, rr, line, target_ips, dry_run):
             changed_any = True
             if dry_run:
-                print(f"    [DRY RUN] 将切换 {rr} -> {target_ips}")
+                print(f"    [DRY RUN] 将切换 {rr} ({line}) -> {target_ips}")
             else:
-                print(f"    OK {rr} 已切到备站")
+                print(f"    OK {rr} ({line}) 已切到备站")
         else:
             print(f"    (已是备站，跳过)")
 
@@ -347,8 +400,8 @@ def cmd_restore(
     dry_run: bool = False,
     include_pimanager: bool = False,
 ) -> None:
-    """恢复到主站: 将 default 线路 A 记录恢复为 CF 优选 IPs。"""
-    targets = FAILOVER_TARGETS if include_pimanager else FAILOVER_TARGETS[:1]
+    """恢复到主站: 将 www default+oversea A 记录恢复为 CF 优选 IPs。"""
+    targets = FAILOVER_TARGETS if include_pimanager else FAILOVER_TARGETS[:2]
 
     # 1. 读取状态文件
     saved_state: dict = {}
@@ -366,13 +419,27 @@ def cmd_restore(
     for target in targets:
         rr = target["rr"]
         line = target["line"]
+        key = state_key(rr, line)
         current_ips = get_current_ips(client, rr, line)
 
         # 区分"保存过但为空"(恢复为空，不新增记录) 与"从未保存"(fallback 兜底)
-        target_ips = saved_state.get(rr) if saved_state else None
+        target_ips = saved_state.get(key) if saved_state else None
         if target_ips is None:
             target_ips = list(FALLBACK_CF_IPS)
-            print(f"  ⚠ {rr}: 无保存的 IP，fallback -> {target_ips}")
+            print(f"  ⚠ {rr} ({line}): 无保存的 IP，fallback -> {target_ips}")
+
+        # 健康校验（2026-08-15 演练修复）：状态文件可能被污染/过期，
+        # 只写回可达的 IP；全部不可达则用 fallback；仍不可达则保持备站，需人工介入
+        if rr == "www":
+            print(f"  🔍 校验 {len(target_ips)} 个目标 IP 可达性...")
+            verified = verify_ips(target_ips, f"{rr}.{DOMAIN}")
+            if not verified:
+                print(f"  ⚠ {rr} ({line}) 保存的目标 IP 全部不可达，尝试 fallback CF IPs")
+                verified = verify_ips(list(FALLBACK_CF_IPS), f"{rr}.{DOMAIN}")
+            if not verified:
+                print(f"  ❌ {rr} ({line}): 无可用恢复目标，保持备站不写回，需人工介入", file=sys.stderr)
+                continue
+            target_ips = verified
 
         print(f"\n  {rr}.{DOMAIN} ({line}):")
         print(f"    当前: {current_ips}")
@@ -381,9 +448,9 @@ def cmd_restore(
         if update_to_ips(client, rr, line, target_ips, dry_run):
             changed_any = True
             if dry_run:
-                print(f"    [DRY RUN] 将恢复 {rr} -> CF 优选 IPs")
+                print(f"    [DRY RUN] 将恢复 {rr} ({line}) -> CF 优选 IPs")
             else:
-                print(f"    OK {rr} 已恢复到 CF 优选 IPs (主站)")
+                print(f"    OK {rr} ({line}) 已恢复到 CF 优选 IPs (主站)")
         else:
             print(f"    (已是主站状态，跳过)")
 

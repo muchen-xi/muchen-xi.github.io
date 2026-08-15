@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""权威解析 www.chenxiuniverse.top 的 default 线路 A 记录（不经递归 DNS，防缓存/线路失明）。
+"""权威解析 www.chenxiuniverse.top 指定线路的 A 记录（不经递归 DNS，防缓存/线路失明）。
 
 容灾监控 primary 模式用它获取当前权威 A 记录，再 curl --resolve 直连检测。
+
+用法: python3 resolve_primary.py [default|oversea]   （默认 default）
 
 背景（2026-08-15 黑洞演练）:
   - 递归 DNS 对旧记录有 ≥60min 级缓存，DNS 层攻击时检测失明
   - runner 在境外，递归解析命中 oversea 线路；容灾切换保护的却是 default 线路（中国用户）
-  - 因此必须从权威 API 按 line=default 取记录，绕过递归解析
+  - 因此必须从权威 API 按指定 line 取记录，绕过递归解析
 
 环境变量: ALI_KEY_ID / ALI_KEY_SECRET（与 failover-dns.py 相同）
 失败时输出为空并退出码 1，调用方回退普通 DNS 检测。
@@ -54,18 +56,22 @@ def call(action: str, **extra) -> dict:
 
 
 def main() -> None:
+    line = sys.argv[1] if len(sys.argv) > 1 else "default"
+    if line not in ("default", "oversea"):
+        sys.stderr.write(f"非法线路: {line}\n")
+        sys.exit(1)
     try:
         d = call(
             "DescribeDomainRecords",
             DomainName=DOMAIN,
             RRKeyWord="www",
             TypeKeyWord="A",
-            Line="default",
+            Line=line,
         )
         recs = [
             r["Value"]
             for r in (d.get("DomainRecords", {}).get("Record", []) or [])
-            if r.get("RR") == "www" and r.get("Type") == "A" and r.get("Line") == "default"
+            if r.get("RR") == "www" and r.get("Type") == "A" and r.get("Line") == line
         ]
         if recs:
             print(recs[0])

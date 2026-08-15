@@ -54,13 +54,32 @@ jobs:
             fi
           fi
           if [ -z "$STATUS" ]; then
-            # primary 模式：权威 API(line=default) 取当前 A 记录 + --resolve 直连检测。
+            # primary 模式：权威 API 分别取 default/oversea 线路 A 记录 + --resolve 直连检测。
             # 不经递归 DNS — 防 DNS 层攻击/递归缓存失明，且境外 runner 不再误检 oversea 线路
-            # （2026-08-15 黑洞演练实测：递归缓存 ≥60min，且境外解析命中 oversea 线路）
-            MAIN_IP=$(python3 monitoring/scripts/resolve_primary.py 2>/dev/null || true)
-            if [ -n "$MAIN_IP" ]; then
-              echo "primary 模式 — 权威解析 $MAIN_IP 直连检测（绕过递归缓存）"
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --resolve www.chenxiuniverse.top:443:$MAIN_IP --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null || true)
+            # （2026-08-15 黑洞演练：失明根因 = 境外递归命中 oversea 线路 + 递归缓存 ≥60min）
+            DEF_IP=$(python3 monitoring/scripts/resolve_primary.py default 2>/dev/null || true)
+            OVA_IP=$(python3 monitoring/scripts/resolve_primary.py oversea 2>/dev/null || true)
+            DEF_BAD=""
+            OVA_BAD=""
+            if [ -n "$DEF_IP" ]; then
+              DEF_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --resolve www.chenxiuniverse.top:443:$DEF_IP --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null || true)
+              echo "primary 模式 — default $DEF_IP 直连: HTTP ${DEF_STATUS:-000}"
+              { [ "${DEF_STATUS:-000}" -ge 500 ] 2>/dev/null || [ "${DEF_STATUS:-000}" = "000" ]; } && DEF_BAD=1
+            fi
+            if [ -n "$OVA_IP" ]; then
+              OVA_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --resolve www.chenxiuniverse.top:443:$OVA_IP --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null || true)
+              echo "primary 模式 — oversea $OVA_IP 直连: HTTP ${OVA_STATUS:-000}"
+              { [ "${OVA_STATUS:-000}" -ge 500 ] 2>/dev/null || [ "${OVA_STATUS:-000}" = "000" ]; } && OVA_BAD=1
+            fi
+            if [ -n "$DEF_IP" ] || [ -n "$OVA_IP" ]; then
+              # 解析成功过的线路全部健康才算 healthy；解析失败的线路视为未检测，不计入
+              if { [ -z "$DEF_IP" ] || [ -z "$DEF_BAD" ]; } && { [ -z "$OVA_IP" ] || [ -z "$OVA_BAD" ]; }; then
+                echo "双线路健康（default/oversea）"
+                STATUS=200
+              else
+                echo "::warning::线路异常 — default_bad=${DEF_BAD:-0} oversea_bad=${OVA_BAD:-0}，判定不健康"
+                STATUS=000
+              fi
             fi
           fi
           if [ -z "$STATUS" ]; then
