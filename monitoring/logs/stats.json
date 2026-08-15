@@ -301,7 +301,7 @@
     "checks_missed": 1
   },
   "2026-08-15": {
-    "checks_total": 5,
+    "checks_total": 6,
     "checks_failed": 0,
     "backup_count": 0,
     "restore_count": 0
