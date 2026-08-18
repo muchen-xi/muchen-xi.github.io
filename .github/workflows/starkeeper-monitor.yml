@@ -116,14 +116,14 @@ jobs:
           HEALTHY="${{ steps.check.outputs.healthy }}"
           ACTION="${{ steps.decision.outputs.action }}"
           if [ "$HEALTHY" = "false" ]; then
-            python3 monitoring/scripts/monitor_logger.py starkeeper-check --status fail --http-code 000
+            python3 monitoring/scripts/monitor_logger.py failover-check --status fail --http-code 000
           fi
           case "$ACTION" in
             backup|restore)
-              python3 monitoring/scripts/monitor_logger.py starkeeper-action --action "$ACTION"
+              python3 monitoring/scripts/monitor_logger.py failover-action --action "$ACTION"
               ;;
             rotate)
-              python3 monitoring/scripts/monitor_logger.py starkeeper-action --action rotate
+              python3 monitoring/scripts/monitor_logger.py failover-action --action rotate
               ;;
           esac
 

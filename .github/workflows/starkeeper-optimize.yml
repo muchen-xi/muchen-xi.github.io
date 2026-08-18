@@ -49,7 +49,9 @@ jobs:
             exit 0
           fi
           echo "本次优选 IP: $IPS"
-          if python3 monitoring/scripts/starkeeper_dns.py set-ips "$IPS"; then
+          OUT=$(python3 monitoring/scripts/starkeeper_dns.py set-ips "$IPS")
+          echo "$OUT"
+          if echo "$OUT" | grep -q "default A ->"; then
             echo "updated=true" >> $GITHUB_OUTPUT
           else
             echo "updated=false" >> $GITHUB_OUTPUT
@@ -61,7 +63,7 @@ jobs:
           ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
           ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
         run: |
-          python3 monitoring/scripts/monitor_logger.py starkeeper-action --action rotate
+          python3 monitoring/scripts/monitor_logger.py failover-action --action rotate
 
       - name: 提交日志
         if: always()
