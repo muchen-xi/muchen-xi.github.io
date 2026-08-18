@@ -1,0 +1,144 @@
+name: 星钥官网监控
+on:
+  schedule:
+    - cron: '*/5 * * * *'     # 每5分钟
+  workflow_dispatch:            # 手动触发
+
+concurrency:
+  group: starkeeper-monitor     # 串行化，防 schedule 与手动触发并发读写状态
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  starkeeper-health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 读取星钥监控状态
+        id: state_file
+        run: |
+          python3 - <<'PY'
+          import json, os
+          try:
+              d = json.load(open('monitoring/starkeeper_state.json'))
+          except Exception:
+              d = {}
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"fails={d.get('fails', 0)}\n")
+              f.write(f"healthy_streak={d.get('healthy_streak', 0)}\n")
+              f.write(f"mode={d.get('mode', 'primary')}\n")
+          PY
+
+      - name: 健康检查（权威解析直连探测）
+        id: check
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+        run: |
+          if python3 monitoring/scripts/starkeeper_dns.py check; then
+            echo "healthy=true" >> $GITHUB_OUTPUT
+            echo "健康 (mode=${{ steps.state_file.outputs.mode }})"
+          else
+            echo "healthy=false" >> $GITHUB_OUTPUT
+            echo "::warning::不健康 (mode=${{ steps.state_file.outputs.mode }})"
+          fi
+
+      - name: 决策（计数 + 容灾/恢复/轮换）
+        id: decision
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+        run: |
+          FAILS=${{ steps.state_file.outputs.fails }}
+          STREAK=${{ steps.state_file.outputs.healthy_streak }}
+          MODE=${{ steps.state_file.outputs.mode }}
+          HEALTHY=${{ steps.check.outputs.healthy }}
+          ACTION=none
+          NEW_FAILS=$FAILS
+          NEW_STREAK=$STREAK
+          NEW_MODE=$MODE
+          if [ "$HEALTHY" = "true" ]; then
+            NEW_FAILS=0
+            if [ "$MODE" = "primary" ]; then
+              NEW_STREAK=$((STREAK + 1))
+            else
+              NEW_STREAK=$((STREAK + 1))
+              if [ "$NEW_STREAK" -ge 3 ]; then
+                # 容灾期间官方入口连续健康 → 恢复优选 IP 直连（restore 内置候选池可达性验证）
+                echo "恢复条件满足 (healthy_streak=$NEW_STREAK)，尝试 restore"
+                if python3 monitoring/scripts/starkeeper_dns.py restore; then
+                  ACTION=restore
+                  NEW_MODE=primary
+                  NEW_STREAK=0
+                else
+                  echo "::warning::restore 失败（候选池不可达），保持 backup"
+                  NEW_STREAK=0
+                fi
+              fi
+            fi
+          else
+            NEW_STREAK=0
+            NEW_FAILS=$((FAILS + 1))
+            if [ "$MODE" = "primary" ] && [ "$NEW_FAILS" -ge 3 ]; then
+              # 连续 3 次失败：先尝试换优选 IP（IP 失效是常见故障）；换不动再切官方 CNAME 兜底
+              echo "连续 $NEW_FAILS 次失败，尝试轮换优选 IP"
+              if python3 monitoring/scripts/starkeeper_dns.py rotate; then
+                ACTION=rotate
+                NEW_FAILS=0
+                echo "IP 轮换成功，继续 primary"
+              else
+                echo "::warning::候选池不可达，切官方 CNAME 容灾"
+                python3 monitoring/scripts/starkeeper_dns.py backup
+                ACTION=backup
+                NEW_MODE=backup
+                NEW_FAILS=0
+              fi
+            fi
+          fi
+          echo "action=$ACTION" >> $GITHUB_OUTPUT
+          python3 - "$NEW_MODE" "$NEW_FAILS" "$NEW_STREAK" <<'PY'
+          import json, sys
+          d = {"mode": sys.argv[1], "fails": int(sys.argv[2]), "healthy_streak": int(sys.argv[3])}
+          with open('monitoring/starkeeper_state.json', 'w') as f:
+              json.dump(d, f)
+          PY
+          echo "结果: healthy=$HEALTHY fails=$NEW_FAILS streak=$NEW_STREAK mode=$NEW_MODE action=$ACTION"
+
+      - name: 记录事件
+        if: always()
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+        run: |
+          HEALTHY="${{ steps.check.outputs.healthy }}"
+          ACTION="${{ steps.decision.outputs.action }}"
+          if [ "$HEALTHY" = "false" ]; then
+            python3 monitoring/scripts/monitor_logger.py starkeeper-check --status fail --http-code 000
+          fi
+          case "$ACTION" in
+            backup|restore)
+              python3 monitoring/scripts/monitor_logger.py starkeeper-action --action "$ACTION"
+              ;;
+            rotate)
+              python3 monitoring/scripts/monitor_logger.py starkeeper-action --action rotate
+              ;;
+          esac
+
+      - name: 提交状态与日志
+        if: always()
+        continue-on-error: true
+        run: |
+          git config user.name "muchen-xi"
+          git config user.email "134781235+muchen-xi@users.noreply.github.com"
+          git add monitoring/logs/ 2>/dev/null || true
+          [ -f monitoring/starkeeper_state.json ] && git add monitoring/starkeeper_state.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "无变更"
+          else
+            git pull --rebase --autostash origin HEAD 2>/dev/null || true
+            git commit -m "📡 星钥官网监控状态"
+            git push
+          fi
