@@ -197,6 +197,32 @@ def cmd_restore() -> int:
     return 0
 
 
+def cmd_candidates() -> int:
+    """输出候选池为 CloudflareST 格式 CSV（供 china_speed_test.py 做 ITDog 境内测速）。"""
+    print("IP地址")
+    for ip in CANDIDATES:
+        print(ip)
+    return 0
+
+
+def cmd_set_ips(ips_csv: str) -> int:
+    """直接设置 default A 记录为指定 IP 列表（由 ITDog 境内测速结果驱动，跳过 runner 探测）。"""
+    ips = [ip.strip() for ip in ips_csv.split(",") if ip.strip()]
+    if not ips:
+        print("  !! 空 IP 列表")
+        return 1
+    current = sorted(r["value"] for r in current_default_ip_records())
+    if sorted(ips) == current:
+        print("  set-ips: 与当前记录一致，无变更")
+        return 0
+    for r in current_default_ip_records():
+        delete_record(r["id"])
+    for ip in ips:
+        add_record("A", ip, "default")
+    print("  set-ips: default A ->", ", ".join(ips))
+    return 0
+
+
 if __name__ == "__main__":
     action = sys.argv[1] if len(sys.argv) > 1 else "status"
     if action == "status":
@@ -209,5 +235,9 @@ if __name__ == "__main__":
         sys.exit(cmd_backup())
     if action == "restore":
         sys.exit(cmd_restore())
+    if action == "candidates":
+        sys.exit(cmd_candidates())
+    if action == "set-ips":
+        sys.exit(cmd_set_ips(sys.argv[2] if len(sys.argv) > 2 else ""))
     print("unknown action:", action)
     sys.exit(2)

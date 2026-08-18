@@ -1,0 +1,79 @@
+name: 星钥官网优选IP优化
+on:
+  schedule:
+    - cron: '17 */6 * * *'    # 每6小时（错峰，避开整点主站任务）
+  workflow_dispatch:            # 手动触发
+
+concurrency:
+  group: starkeeper-optimize    # 与监控串行独立组，防并发改 DNS
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  itdog-scan:
+    name: ITDog 境内测速并更新优选IP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 生成候选 IP 列表
+        run: |
+          python3 monitoring/scripts/starkeeper_dns.py candidates > candidate.csv
+          echo "候选:"
+          cat candidate.csv
+
+      - name: 安装 Playwright
+        run: |
+          pip install -q playwright
+          playwright install --with-deps chromium
+
+      - name: ITDog 境内三网测速
+        run: |
+          python3 monitoring/scripts/china_speed_test.py candidate.csv china_result.csv || true
+          echo "=== 境内测速结果 ==="
+          cat china_result.csv 2>/dev/null || echo "测速失败（无输出）"
+
+      - name: 解析结果并更新 DNS
+        id: update
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+        run: |
+          # 取 Top 2 IP（跳过表头，按延迟升序），逗号拼接
+          IPS=$(tail -n +2 china_result.csv 2>/dev/null | cut -d, -f1 | head -2 | paste -sd, -)
+          if [ -z "$IPS" ]; then
+            echo "::warning::ITDog 测速无结果，跳过 DNS 更新（保持现状）"
+            echo "updated=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "本次优选 IP: $IPS"
+          if python3 monitoring/scripts/starkeeper_dns.py set-ips "$IPS"; then
+            echo "updated=true" >> $GITHUB_OUTPUT
+          else
+            echo "updated=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 记录事件
+        if: steps.update.outputs.updated == 'true'
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+        run: |
+          python3 monitoring/scripts/monitor_logger.py starkeeper-action --action rotate
+
+      - name: 提交日志
+        if: always()
+        continue-on-error: true
+        run: |
+          git config user.name "muchen-xi"
+          git config user.email "134781235+muchen-xi@users.noreply.github.com"
+          git add monitoring/logs/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "无变更"
+          else
+            git pull --rebase --autostash origin HEAD 2>/dev/null || true
+            git commit -m "📡 星钥官网优选IP更新"
+            git push
+          fi
