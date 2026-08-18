@@ -191,6 +191,11 @@ def set_ips(
     # 更新/新增
     for i, ip in enumerate(new_ips):
         if i < len(record_ids):
+            old = current_ips[i] if i < len(current_ips) else "?"
+            if old == ip:
+                # 同值更新会触发阿里云 DomainRecordDuplicate（400）
+                print(f"  跳过 #{i+1}: {old}（值未变）")
+                continue
             # 更新现有记录
             req = alidns_models.UpdateDomainRecordRequest(
                 record_id=record_ids[i],
@@ -201,7 +206,6 @@ def set_ips(
                 ttl=TTL,
             )
             client.update_domain_record(req)
-            old = current_ips[i] if i < len(current_ips) else "?"
             print(f"  更新 #{i+1}: {old} → {ip}")
         else:
             # 新增记录
@@ -213,8 +217,15 @@ def set_ips(
                 line=line,
                 ttl=TTL,
             )
-            client.add_domain_record(req)
-            print(f"  新增 #{i+1}: {ip}")
+            try:
+                client.add_domain_record(req)
+                print(f"  新增 #{i+1}: {ip}")
+            except Exception as e:
+                if "DomainRecordDuplicate" in str(e):
+                    # 记录已存在（例如对位偏移时新 IP 已在 DNS 中），幂等跳过
+                    print(f"  跳过 #{i+1}: {ip}（已存在）")
+                else:
+                    raise
 
     # 删除多余的旧记录
     for j in range(len(new_ips), len(record_ids)):
