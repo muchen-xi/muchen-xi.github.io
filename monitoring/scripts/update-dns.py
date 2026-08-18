@@ -46,6 +46,7 @@ TARGETS = [
     {"rr": "health", "line": "oversea", "csv": "overseas"},
     {"rr": "history", "line": "default", "csv": "china"},    # 网页进化史
     {"rr": "history", "line": "oversea", "csv": "overseas"},
+    {"rr": "starkeeper", "line": "default", "csv": "china"},  # 星钥官网（oversea 保持官方 CNAME 不动）
 ]
 
 # RecordId 环境变量映射
@@ -68,6 +69,17 @@ FAILOVER_TARGETS = {"www", "pimanager"}
 def is_failover_backup() -> bool:
     """容灾备份模式检测：读取 .failover_count.json，mode=backup 时跳过容灾目标更新。"""
     state_path = Path(__file__).resolve().parent.parent / ".failover_count.json"
+    try:
+        d = json.loads(state_path.read_text(encoding="utf-8"))
+        return d.get("mode") == "backup"
+    except Exception:
+        return False
+
+
+def is_starkeeper_backup() -> bool:
+    """星钥容灾备份模式检测：starkeeper_state.json mode=backup 时跳过 starkeeper 更新
+    （starkeeper 容灾时 default 线路被切为官方 CNAME，优选流程不得改回 A 记录）。"""
+    state_path = Path(__file__).resolve().parent.parent / "starkeeper_state.json"
     try:
         d = json.loads(state_path.read_text(encoding="utf-8"))
         return d.get("mode") == "backup"
@@ -237,6 +249,9 @@ def main():
     backup_mode = is_failover_backup()
     if backup_mode:
         print("⚠ 检测到容灾备份模式 (mode=backup) — 跳过 www/pimanager 更新，避免破坏容灾切换")
+    starkeeper_backup = is_starkeeper_backup()
+    if starkeeper_backup:
+        print("⚠ 星钥官网容灾备份模式 (starkeeper_state.json) — 跳过 starkeeper 更新")
 
     if dry_run:
         print("⚠ DRY RUN 模式 — 不会实际修改 DNS\n")
@@ -275,6 +290,9 @@ def main():
 
         if backup_mode and rr in FAILOVER_TARGETS:
             print(f"⚠ {rr}.{DOMAIN} ({line}): 容灾备份模式，跳过（保护容灾切换）")
+            continue
+        if rr == "starkeeper" and starkeeper_backup:
+            print(f"⚠ {rr}.{DOMAIN} ({line}): 星钥容灾备份模式，跳过")
             continue
 
         ips = china_ips if csv_source == "china" else overseas_ips
