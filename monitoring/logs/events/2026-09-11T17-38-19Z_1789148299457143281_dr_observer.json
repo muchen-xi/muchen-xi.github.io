@@ -1,0 +1,1 @@
+{"ts": "2026-09-11T17:38:19Z", "type": "dr_observer", "verdict": "unhealthy", "target": "www", "detail": "恢复闸门拦截(www)：_dr-pi --target www 判定 unhealthy，保持 backup 不恢复"}
