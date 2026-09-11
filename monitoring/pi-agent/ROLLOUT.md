@@ -77,12 +77,17 @@ sudo journalctl -u dr-agent -n 30 --no-pager
 
 > 这一档验的是**凭据、签名、TXT 读写、SMTP 全链路**，零 DNS 风险。
 
-### 档 C · 阶段一：可切备、不自动恢复
+### 档 C · 阶段一：可切备、不自动恢复　✅ **2026-09-12 已落实并演练验证**
 
 ```bash
 sudo sed -i 's/^DR_SWITCH_ENABLED=.*/DR_SWITCH_ENABLED=1/' /etc/dr-agent.env
 sudo systemctl restart dr-agent
 ```
+
+> **已生效状态**：`DR_SWITCH_ENABLED=1` + `DR_ROLE=switch_only`。
+> 上线前完成的两轮黑洞演练结论：注入→切换 **1分54秒~2分09秒**；快照存的是"最后一次健康时的主站 IP"（不是攻击值）；
+> 切换后会签板 `lines` 表达"主站路径"、`peer --target www` 在备站期间仍为 `unhealthy`，
+> 云侧闸门因此能拦下"主站还没恢复就切回"的拉锯。
 
 此时树莓派具备**独立切备能力**：两条线路连续 3 次完整探测不健康（≈90 秒）即把 www 切到 Vercel 备站、starkeeper 切到官方 CNAME，并写 `_dr-snap` 快照。
 恢复仍由云监控执行，但云监控的恢复会被"树莓派说不健康"拦下——这正是防止境外视角把国内故障期间做的切换撤销的机制。

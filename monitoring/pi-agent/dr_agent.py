@@ -649,7 +649,7 @@ class State(object):
         "last_probe", "last_full_probe_epoch", "last_switch_ts", "last_switch_epoch",
         "last_switch_dir", "last_verdict", "last_net", "last_mode", "last_lines",
         "last_live", "last_main_lines", "last_detail", "last_peer", "tcp_cache",
-        "target_modes", "last_good_ips",
+        "target_modes", "last_good_ips", "stats",
         "clock_skew", "clock_checked_at", "alerts", "last_heartbeat",
         "board_sig", "last_board_write_epoch",
     )
@@ -674,6 +674,7 @@ class State(object):
             "last_live": {},
             "last_main_lines": {},
             "last_good_ips": {},
+            "stats": {},
             "last_detail": [],
             "last_peer": "",
             "tcp_cache": {},
@@ -1602,6 +1603,26 @@ LIGHT_PROBE_HOSTS = {
 }
 
 
+def bump_stat(ctx, key, n=1):
+    """探测统计：同时维护"当日"与"累计"两套计数，跨天自动重置当日。
+
+    键：light（轻探次数）/ light_fail（轻探失败）/ full（完整探测轮数）/
+        unhealthy（判定不健康轮数）/ switch（执行切换次数）。
+    只写内存状态，随 state.json 落盘（内容变化才写，SD 卡友好）。
+    """
+    st = ctx.state.data.setdefault("stats", {})
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    if st.get("date") != today:
+        st["date"] = today
+        for k in ("light", "light_fail", "full", "unhealthy", "switch"):
+            st[k] = 0
+    st[key] = int(st.get(key, 0)) + n
+    st["total_" + key] = int(st.get("total_" + key, 0)) + n
+    if not st.get("since"):
+        st["since"] = utc_now_str()
+    return st
+
+
 def light_probe(ctx):
     """轻探最近一次权威查询缓存的 IP。返回 (ok, detail)。
 
@@ -1639,7 +1660,10 @@ def light_probe(ctx):
             ok = ok_code(code)
         (good if ok else bad).append("%s(%s)" % (key, ip))
     if bad:
+        bump_stat(ctx, "light")
+        bump_stat(ctx, "light_fail")
         return False, "%s 轻探失败: %s" % (mode, ", ".join(bad))
+    bump_stat(ctx, "light")
     return True, "%s 轻探通过: %s" % (mode, ", ".join(good))
 
 
@@ -1935,6 +1959,7 @@ def execute_backup(ctx, res, planned):
     if "starkeeper" in planned:
         cache.pop("starkeeper", None)
     LOG.warning("✅ 切换完成: %s", "; ".join(changes))
+    bump_stat(ctx, "switch")
     ctx.alerts.send("switch_ok", "[DR] 🔁 已切换到备站", _switch_body(ctx, res, planned, changes))
     return True
 
@@ -2161,16 +2186,34 @@ def heartbeat_check(ctx):
     today = time.strftime("%Y-%m-%d", local)
     if state.get("last_heartbeat") == today:
         return
+    if ctx.alerts.send("heartbeat", "[DR] 📡 树莓派观察者心跳 %s" % today,
+                       heartbeat_body(ctx), force=True):
+        state["last_heartbeat"] = today
+
+
+def heartbeat_body(ctx):
+    """构造心跳邮件正文（独立成函数：便于离线预览与测试）。"""
+    cfg = ctx.cfg
+    state = ctx.state.data
+    local = time.localtime()
     temp = read_temp()
     disk = read_disk_percent(cfg["state_dir"])
     up = int(time.monotonic() - ctx.start_mono)
     sys_up = read_sys_uptime()
+    # 探测统计（当日 + 累计）；可用性按"完整探测轮数"算，避免轻探次数稀释
+    st = state.get("stats") or {}
+    n_full = int(st.get("full", 0))
+    n_unc = int(st.get("unhealthy", 0))
+    avail = ("%.2f%%" % (100.0 * (n_full - n_unc) / n_full)) if n_full else "—（今日尚无完整探测）"
     body = (
         "树莓派观察者心跳（每日 08:00）。\n\n"
         "时间: %s (UTC) / 本地 %s\n"
         "判定: %s（net=%s, mode=%s, fast=%d, fails=%d, streak=%d）\n"
         "线路(主站路径): %s\n"
         "当前入口(备站/CNAME): %s\n"
+        "今日探测: 轻探 %d 次（失败 %d）/ 全探 %d 轮（不健康 %d）/ 切换 %d 次\n"
+        "今日可用性: %s\n"
+        "累计探测: 轻探 %d 次 / 全探 %d 轮（不健康 %d）/ 切换 %d 次\n"
         "温度: %s\n"
         "磁盘(状态目录): %s\n"
         "进程 uptime: %ds / 系统 uptime: %s\n"
@@ -2184,6 +2227,11 @@ def heartbeat_check(ctx):
         int(state.get("fails", 0)), int(state.get("streak", 0)),
         ", ".join("%s=%s" % (k, v) for k, v in sorted((state.get("last_lines") or {}).items())) or "无",
         ", ".join("%s=%s" % (k, v) for k, v in sorted((state.get("last_live") or {}).items())) or "无（primary 语义）",
+        int(st.get("light", 0)), int(st.get("light_fail", 0)),
+        n_full, n_unc, int(st.get("switch", 0)),
+        avail,
+        int(st.get("total_light", 0)), int(st.get("total_full", 0)),
+        int(st.get("total_unhealthy", 0)), int(st.get("total_switch", 0)),
         ("%.1f ℃" % temp) if temp is not None else "获取不到（非树莓派或权限不足）",
         ("%.1f%%" % disk) if disk is not None else "获取不到",
         up, ("%ds" % sys_up) if sys_up is not None else "获取不到",
@@ -2191,8 +2239,7 @@ def heartbeat_check(ctx):
         state.get("last_switch_ts") or "从未", state.get("last_switch_dir") or "-",
         " | ".join(state.get("last_detail") or []) or "无",
     )
-    if ctx.alerts.send("heartbeat", "[DR] 📡 树莓派观察者心跳 %s" % today, body, force=True):
-        state["last_heartbeat"] = today
+    return body
 
 
 # ─────────────────────────── tick 主流程 ───────────────────────────
@@ -2260,6 +2307,7 @@ def run_tick(ctx):
 
     if due_full:
         res = probe_full(ctx)
+        bump_stat(ctx, "full")
         state["last_full_probe_epoch"] = now
         state["last_probe"] = utc_now_str()
         state["last_verdict"] = res["verdict"]
@@ -2290,6 +2338,7 @@ def run_tick(ctx):
         elif res["verdict"] == "unhealthy":
             state["fails"] = int(state.get("fails", 0)) + 1
             state["streak"] = 0
+            bump_stat(ctx, "unhealthy")
         # unknown：冻结计数（自身网络/API 故障时不累积误判）
 
         if res["verdict"] == "healthy":
