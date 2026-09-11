@@ -68,6 +68,8 @@ sudo -E ALI_KEY_ID=xxx ALI_KEY_SECRET=yyy \
 | `DR_MIN_DWELL_SECONDS` / `DR_PEER_MAX_AGE_SECONDS` | 1800 / 1200 | 恢复闸门 |
 | `DR_CLOCK_SKEW_MAX` | 300 | 超限拒绝一切 DNS 写（Pi Zero W 无 RTC） |
 | `DR_ALERT_ENABLED` / `DR_DRY_RUN` | 1 / 0 | 开关 |
+| `DR_SWITCH_ENABLED` | 1 | 0 = 只闸住 DNS 写：判定满足时只告警不切换（探测/告警/心跳照常，上线验证用） |
+| `DR_BOARD_WRITE_SECONDS` | 300 | `_dr-pi` 心跳最小写入间隔；verdict/fails/fast/net/mode 变化时立即写 |
 | `SMTP_*` / `REPORT_TO` | smtp.qiye.aliyun.com:465 | SMTP_SSL 告警 |
 
 缺 `ALI_KEY_ID/SECRET` 时：`--selftest` 明确报 ❌，`--loop` 拒绝启动（有意保护）。
@@ -97,11 +99,21 @@ sudo -E ALI_KEY_ID=xxx ALI_KEY_SECRET=yyy \
 
 | 记录 | 行为 |
 |---|---|
-| `_dr-pi` | 每 tick 写一次（契约 2.1 schema，含 seq/verdict/net/mode/fast/fails/lines/temp/up，≤255B） |
+| `_dr-pi` | 心跳降频写（契约 2.1 schema，含 seq/verdict/net/mode/fast/fails/lines/temp/up，≤255B）：verdict/fails/fast/net/mode 任一变化立即写；无变化时按 `DR_BOARD_WRITE_SECONDS`（默认 300s）最小间隔写；重启后第一轮必写一次 |
 | `_dr-snap` | 切换前 best-effort 写；已存在有效快照则**保留其 IP 数组**，只更新 ts/who/dir（防污染） |
 | `_dr-gh` | 只读；按契约第三节 peer 语义（absent/stale/unknown/healthy/unhealthy）做恢复闸门 |
 
 任一读写失败 → 记日志降级继续，**绝不让容灾因会签通道故障而失效**（契约第五节）。
+
+## 测试接缝（仅供离线对抗推演，生产勿用）
+
+`monitoring/tests/` 下有一套不依赖 pytest 的离线推演（`python monitoring/tests/test_coop_scenarios.py`）。
+为支持它，`dr_agent.py` 提供两个**仅供测试**的接缝（生产路径判定逻辑不变）：
+
+- 环境变量 `ALI_ENDPOINT`（如 `http://127.0.0.1:8899/`）覆盖阿里云 API 端点，配合
+  `monitoring/tests/mock_alidns.py` 假 Alidns 服务；生产 `/etc/dr-agent.env` **不得**设置。
+- `--ticks N`：同一进程内连续跑 N 轮 tick 后退出，用于累积"连续 N 次不健康"等跨轮计数
+  （`--once` 语义不变，约等于 `--ticks 1`）。
 
 ## 升级方法
 

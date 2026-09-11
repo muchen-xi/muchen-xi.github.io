@@ -15,6 +15,8 @@
 环境变量:
   ALI_KEY_ID / ALI_KEY_SECRET — 阿里云 AccessKey（必需；--selftest 除外）
   ALI_REGION                  — 阿里云区域，默认 cn-hangzhou
+  ALI_ENDPOINT                — 【仅供测试】覆盖 API 端点（如 http://127.0.0.1:8899/），
+                                生产环境不得设置；供 monitoring/tests 离线 mock 使用
 
 背景:
   DR-OBSERVER-CONTRACT.md v1 规定：任何一方判断"现在处于什么状态"一律从阿里云 API
@@ -70,6 +72,11 @@ def enc(s) -> str:
 
 
 def endpoint() -> str:
+    # 测试接缝（仅供离线 mock，生产环境不得设置 ALI_ENDPOINT）：
+    # 覆盖默认端点，如 ALI_ENDPOINT=http://127.0.0.1:8899/
+    override = (os.environ.get("ALI_ENDPOINT") or "").strip()
+    if override:
+        return override if override.endswith("/") else override + "/"
     region = os.environ.get("ALI_REGION") or DEFAULT_REGION
     return "https://alidns.{}.aliyuncs.com/".format(region)
 

@@ -22,6 +22,7 @@
   python3 dr_agent.py --loop                  # systemd 常驻
   python3 dr_agent.py --once                  # 只跑一轮后退出
   python3 dr_agent.py --once --dry-run        # 不写 DNS / 不写 TXT / 不发邮件
+  python3 dr_agent.py --ticks 5               # 同一进程内连续跑 5 轮 tick 后退出
   python3 dr_agent.py --status                # 打印上次状态与最近判定
   python3 dr_agent.py --selftest              # 环境自检（✅ ⚠ ❌）
   python3 dr_agent.py --config /etc/dr-agent.env --state-dir /var/lib/dr-agent
@@ -33,6 +34,16 @@
     不拿旧证据切换。
   - 探测本站一律 User-Agent: chenxiuniverse-monitor/1.0（站点 middleware 会
     403 掉 curl / python-urllib 的默认 UA，误判会自伤）。
+  - `_dr-pi` 心跳按 DR_BOARD_WRITE_SECONDS（默认 300s）降频：verdict/fails/fast/
+    net/mode 任一变化立即写；无变化时才按最小间隔写（重启后第一轮必写一次）。
+  - DR_SWITCH_ENABLED=0 时只闸住 DNS 写动作（切换/恢复都拦），探测、判定、告警、
+    心跳与 state.json 全部照常 —— 供上线初期零 DNS 风险验证链路。
+
+测试接缝（仅供离线对抗推演，生产环境不得设置）
+  - 环境变量 ALI_ENDPOINT 覆盖默认 `https://alidns.{region}.aliyuncs.com/` 端点，
+    指向 monitoring/tests/mock_alidns.py（如 http://127.0.0.1:8899/）。
+  - `--ticks N` 在同一进程内跑 N 轮 tick，用于累积"连续 N 次不健康"等跨轮计数
+    （`--once` 语义不变，约等于 --ticks 1）。
 """
 
 import argparse
@@ -134,6 +145,8 @@ DEFAULT_CONFIG = {
     "DR_PEER_MAX_AGE_SECONDS": "1200",
     "DR_CLOCK_SKEW_MAX": "300",
     "DR_CLOCK_CHECK_SECONDS": str(CLOCK_CHECK_SECONDS),
+    "DR_BOARD_WRITE_SECONDS": "300",
+    "DR_SWITCH_ENABLED": "1",
     "DR_ALERT_ENABLED": "1",
     "DR_DRY_RUN": "0",
     "SMTP_SERVER": "smtp.qiye.aliyun.com",
@@ -309,6 +322,8 @@ def load_config(path, explicit=False, state_dir=None):
         "peer_max_age_seconds": max(60, _int_or(values.get("DR_PEER_MAX_AGE_SECONDS"), 1200)),
         "clock_skew_max": max(30, _int_or(values.get("DR_CLOCK_SKEW_MAX"), 300)),
         "clock_check_seconds": max(60, _int_or(values.get("DR_CLOCK_CHECK_SECONDS"), CLOCK_CHECK_SECONDS)),
+        "board_write_seconds": max(5, _int_or(values.get("DR_BOARD_WRITE_SECONDS"), 300)),
+        "switch_enabled": _bool_or(values.get("DR_SWITCH_ENABLED"), True),
         "alert_enabled": _bool_or(values.get("DR_ALERT_ENABLED"), True),
         "dry_run": _bool_or(values.get("DR_DRY_RUN"), False),
         "smtp_server": (values.get("SMTP_SERVER", "smtp.qiye.aliyun.com") or "").strip(),
@@ -336,6 +351,11 @@ class AliDNS(object):
         self.region = region or "cn-hangzhou"
         self.timeout = timeout
         self.endpoint = "https://alidns.%s.aliyuncs.com/" % self.region
+        # 测试接缝（仅供离线 mock，生产环境不得设置 ALI_ENDPOINT）：
+        # 覆盖默认端点，如 ALI_ENDPOINT=http://127.0.0.1:8899/
+        override = (os.environ.get("ALI_ENDPOINT") or "").strip()
+        if override:
+            self.endpoint = override if override.endswith("/") else override + "/"
 
     @staticmethod
     def _enc(s):
@@ -618,6 +638,7 @@ class State(object):
         "last_switch_dir", "last_verdict", "last_net", "last_mode", "last_lines",
         "last_main_lines", "last_detail", "last_peer", "tcp_cache", "target_modes",
         "clock_skew", "clock_checked_at", "alerts", "last_heartbeat",
+        "board_sig", "last_board_write_epoch",
     )
 
     def __init__(self, path):
@@ -646,6 +667,8 @@ class State(object):
             "clock_checked_at": 0.0,
             "alerts": {},
             "last_heartbeat": "",
+            "board_sig": "",
+            "last_board_write_epoch": 0.0,
         }
         self._last_dump = None
 
@@ -975,6 +998,32 @@ def build_pi_payload(ctx):
     text = dump(payload)
     LOG.warning("⚠ _dr-pi 内容超长（%d 字节），已裁剪", len(text.encode("utf-8")))
     return text
+
+
+def board_write_due(ctx, now=None):
+    """_dr-pi 心跳降频判定（DR_BOARD_WRITE_SECONDS）。
+
+    规则（契约要求：对端新鲜度阈值 1200s，300s 心跳足够）：
+      - verdict / fails / fast / net / mode 任一变化 → 立即写（状态变化才是对端关心的）；
+      - 全部未变化 → 距上次成功写入 >= DR_BOARD_WRITE_SECONDS 才写一次心跳。
+    进程重启后 board_sig 为空（build_ctx 重置），第一轮必然写一次，让对端立刻看到上线。
+    返回 (是否该写, 本次状态签名)；签名由调用方在写成功后落 state。
+    """
+    state = ctx.state.data
+    sig = "%s|%s|%s|%s|%s" % (
+        state.get("last_verdict"),
+        int(state.get("fails", 0)),
+        "fast" if state.get("mode_state") == "fast" else "slow",
+        state.get("last_net"),
+        state.get("last_mode"),
+    )
+    if sig != (state.get("board_sig") or ""):
+        return True, sig
+    interval = max(5, int(ctx.cfg.get("board_write_seconds") or 300))
+    last = float(state.get("last_board_write_epoch") or 0)
+    if not last or ((now if now is not None else time.time()) - last) >= interval:
+        return True, sig
+    return False, sig
 
 
 # ─────────────────────────── 权威状态推导（契约第一节） ───────────────────────────
@@ -1360,37 +1409,100 @@ def set_a_records(ctx, rr, line, ips):
     return True
 
 
+def _is_record_conflict_error(err):
+    """判断 add 失败是否属于"记录已存在/同名冲突"类（此类才允许退化为先删后建）。
+
+    阿里云同名 RR+线路 只允许一条记录时，add CNAME 会返回 DomainRecordDuplicate；
+    限流 / 网络 / 权限等其它错误一律不得删任何记录（防裸域）。
+    """
+    text = str(err).lower()
+    return any(marker in text for marker in (
+        "domainrecordduplicate", "domainrecordconflict",
+        "recordduplicate", "recordalreadyexists",
+    ))
+
+
+def _delete_records_best_effort(ctx, recs, what):
+    """逐条删除，失败只告警（绝不抛）。返回成功删除的条数。"""
+    deleted = 0
+    for rec in recs:
+        try:
+            ctx.ali.delete(rec["id"])
+            deleted += 1
+        except Exception as e:
+            LOG.warning("⚠ 删除 %s 记录失败（保持现状，下一轮可收敛）: %s", what, e)
+    return deleted
+
+
 def starkeeper_to_backup(ctx):
-    """starkeeper default：先删光 A 记录，再加 CNAME starkeeper-bpw.pages.dev。"""
+    """starkeeper default → CNAME（先建后删：任何一步失败都不允许留下无记录裸域）。
+
+    1. 先 add CNAME；成功后逐条删 A（删失败只告警 → 落到 mixed，线路仍可用）。
+    2. add 失败：
+       - 错误码属于"记录已存在/冲突"类 → 才允许退化为"删 A 后立即再 add"；
+         二次 add 仍失败 → 告警"无记录状态，需人工介入"并返回 False；
+       - 其它错误（限流/网络/权限）→ 一条记录都不许动，告警后返回 False。
+    """
     ali = ctx.ali
     a_recs = ali.records("starkeeper", "A", "default")
     c_recs = ali.records("starkeeper", "CNAME", "default")
     if c_recs:
-        for rec in a_recs:
-            ali.delete(rec["id"])
+        # CNAME 已就位：只需清理多余的 A（best-effort，失败落到 mixed）
+        _delete_records_best_effort(ctx, a_recs, "starkeeper A")
         return bool(a_recs)
-    for rec in a_recs:
-        ali.delete(rec["id"])
-    ali.add("starkeeper", "CNAME", PAGES_HOST, "default", RECORD_TTL)
+    try:
+        ali.add("starkeeper", "CNAME", PAGES_HOST, "default", RECORD_TTL)
+    except Exception as e:
+        if not _is_record_conflict_error(e):
+            LOG.error("❌ starkeeper CNAME 写入失败（非记录冲突，未改动任何记录）: %s", e)
+            ctx.alerts.send("starkeeper_switch_fail",
+                            "[DR] ❌ starkeeper 切换失败（保持原记录，未留裸域）",
+                            "add CNAME 失败: %s\n当前 A 记录保持原样（线路仍可用）；"
+                            "请检查 AK 权限 / 限流 / 网络后重试。" % e)
+            return False
+        # 冲突类（常见：同名 A 记录占用）→ 退化为先删 A 再立即补 add
+        LOG.warning("⚠ starkeeper CNAME 与现有记录冲突（%s）→ 先删 A 再立即补 add", e)
+        _delete_records_best_effort(ctx, a_recs, "starkeeper A")
+        try:
+            ali.add("starkeeper", "CNAME", PAGES_HOST, "default", RECORD_TTL)
+        except Exception as e2:
+            LOG.error("❌ starkeeper default 处于无记录状态，需人工介入: %s", e2)
+            ctx.alerts.send("starkeeper_bare",
+                            "[DR] ❌ starkeeper default 无记录，需人工介入",
+                            "冲突退化后二次 add 仍失败: %s\n"
+                            "当前 starkeeper default 可能没有任何记录 → 国内解析会直接失败。\n"
+                            "请人工在控制台补 CNAME %s（或执行 failover-dns.py backup）。" % (e2, PAGES_HOST))
+            return False
+        return True
+    _delete_records_best_effort(ctx, a_recs, "starkeeper A")
     return True
 
 
 def starkeeper_to_restore(ctx, ips):
-    """starkeeper default：删 CNAME，写回快照 A 记录。"""
+    """starkeeper default → A 记录（先写后删：写回失败时 CNAME 保持不动，线路仍可用）。"""
     ali = ctx.ali
     c_recs = ali.records("starkeeper", "CNAME", "default")
     a_recs = ali.records("starkeeper", "A", "default")
     if not c_recs and sorted(r["value"] for r in a_recs) == sorted(ips):
         return False
-    for rec in c_recs:
-        ali.delete(rec["id"])
-    for i, ip in enumerate(ips):
-        if i < len(a_recs):
-            ali.update(a_recs[i]["id"], "starkeeper", "A", ip, "default", RECORD_TTL)
-        else:
-            ali.add("starkeeper", "A", ip, "default", RECORD_TTL)
-    for extra in a_recs[len(ips):]:
-        ali.delete(extra["id"])
+    # 1) 先把 A 写回（已有则 update、不足则 add；多余的最后删）
+    try:
+        for i, ip in enumerate(ips):
+            if i < len(a_recs):
+                ali.update(a_recs[i]["id"], "starkeeper", "A", ip, "default", RECORD_TTL)
+            else:
+                ali.add("starkeeper", "A", ip, "default", RECORD_TTL)
+        for extra in a_recs[len(ips):]:
+            ali.delete(extra["id"])
+    except Exception as e:
+        LOG.error("❌ starkeeper A 记录写回失败（CNAME 保持不动，线路仍可用）: %s", e)
+        ctx.alerts.send("starkeeper_restore_fail",
+                        "[DR] ❌ starkeeper 恢复失败（CNAME 保持不动，线路仍可用）",
+                        "写回 A 记录失败: %s\n未删除任何 CNAME：starkeeper 仍走备站入口，"
+                        "不会出现裸域。请检查 AK 权限 / 限流 / 网络后重试。" % e)
+        return False
+    # 2) A 全部就位后才删 CNAME（删失败只告警：落到 mixed，下一轮可收敛）
+    _delete_records_best_effort(ctx, c_recs, "starkeeper CNAME")
     return True
 
 
@@ -1620,6 +1732,15 @@ def maybe_restore(ctx, res):
                            ("%.0fs" % dwell) if dwell is not None else "无", "\n  - ".join(gates)))
         return
 
+    if not cfg.get("switch_enabled", True):
+        # DR_SWITCH_ENABLED=0：恢复路径同样只闸 DNS 写（阶段一本就不恢复，行为不变）
+        LOG.warning("⚠ 本应恢复主站（%s），但 DR_SWITCH_ENABLED=0：仅告警，不写 DNS", ",".join(candidates))
+        ctx.alerts.send("restore_disabled", "[DR] ⚠ 本应恢复到主站，但 DR_SWITCH_ENABLED=0（仅告警）",
+                        "目标: %s\n连续健康 %d 次，闸门均通过，但 DR_SWITCH_ENABLED=0：不执行 DNS 写入。\n"
+                        "如需自动恢复请设置 DR_SWITCH_ENABLED=1 并重启服务。"
+                        % (",".join(candidates), int(state.get("streak", 0))))
+        return
+
     if not snap_has_ips(snap):
         LOG.warning("⚠ 缺少有效快照，无法确定恢复目标（保持备站）")
         ctx.alerts.send("restore_gated", "[DR] ⚠ 缺少快照，恢复被拦下",
@@ -1737,6 +1858,16 @@ def maybe_switch(ctx, res):
                         % (int(state.get("fails", 0)), "\n  - ".join(refused)))
         return
 
+    if not cfg.get("switch_enabled", True):
+        # DR_SWITCH_ENABLED=0：零 DNS 风险验证档 —— 只闸住 DNS 写，其余照常
+        LOG.warning("⚠ 本应切换到备站（%s），但 DR_SWITCH_ENABLED=0：仅告警，不写 DNS", ",".join(planned))
+        ctx.alerts.send("switch_disabled", "[DR] ⚠ 本应切换到备站，但 DR_SWITCH_ENABLED=0（仅告警）",
+                        "完整探测连续 %d 次不健康，权威状态满足切换条件，目标: %s\n"
+                        "但 DR_SWITCH_ENABLED=0：不执行任何 DNS 写入、不写快照（零风险验证档）。\n"
+                        "如需实际切换请设置 DR_SWITCH_ENABLED=1 并重启服务。"
+                        % (int(state.get("fails", 0)), ",".join(planned)))
+        return
+
     execute_backup(ctx, res, planned)
 
 
@@ -1814,6 +1945,9 @@ def build_ctx(cfg):
     ctx.cfg = cfg
     ctx.state = State(os.path.join(cfg["state_dir"], "state.json")).load()
     reset_restart_state(ctx.state)
+    # 会签板心跳：board_sig 不跨进程保留 → 重启后第一轮必写一次，让对端立刻看到本节点上线；
+    # 上次写入时间戳仍从 state.json 读回，避免重启造成额外的心跳写。
+    ctx.state.data["board_sig"] = ""
     ctx.start_mono = time.monotonic()
     ctx.ali = None
     if has_credentials(cfg):
@@ -1923,12 +2057,16 @@ def run_tick(ctx):
                 LOG.warning("⚠ TCP 轻探连续 %d 次失败 → 升级 fast 模式（每 tick 完整探测）",
                             state["tcp_fails"])
 
-    # 会签板：每轮写 _dr-pi（读不到/写失败一律降级）
+    # 会签板：_dr-pi 心跳降频（状态变化立即写；无变化按 DR_BOARD_WRITE_SECONDS 最小间隔）
     if ctx.ali is not None and not cfg["dry_run"]:
-        try:
-            write_txt(ctx.ali, BOARD_PI, build_pi_payload(ctx))
-        except Exception as e:
-            LOG.warning("⚠ 会签板写入异常（降级继续）: %s", e)
+        due, board_sig = board_write_due(ctx)
+        if due:
+            try:
+                if write_txt(ctx.ali, BOARD_PI, build_pi_payload(ctx)):
+                    state["board_sig"] = board_sig
+                    state["last_board_write_epoch"] = time.time()
+            except Exception as e:
+                LOG.warning("⚠ 会签板写入异常（降级继续）: %s", e)
 
     state["clock_skew"] = ctx.clock.skew
     state["clock_checked_at"] = ctx.clock.checked_at
@@ -2008,6 +2146,45 @@ def cmd_once(cfg):
     for line in state.get("last_detail") or []:
         print("    · %s" % line)
     return 0
+
+
+def cmd_ticks(cfg, ticks):
+    """同一进程内连续跑 N 轮 tick 后退出（测试/演练接缝；--once ≈ --ticks 1）。
+
+    tick 间按 DR_TICK_SECONDS 休眠（与 --loop 一致），让完整探测间隔与跨轮计数
+    （连续不健康/连续健康）真实累积。不改变任何判定逻辑。
+    """
+    if not has_credentials(cfg) and not cfg["dry_run"]:
+        print("❌ 缺少 ALI_KEY_ID / ALI_KEY_SECRET，--ticks 无法推导权威状态（可用 --dry-run 降级观察）",
+              file=sys.stderr)
+        return 2
+    ctx = build_ctx(cfg)
+    ctx.clock.refresh(force=True)
+    if ctx.ali is None:
+        LOG.warning("⚠ 无凭据：降级为递归解析视角，只输出判定，不做任何写操作")
+    rc = 0
+    for index in range(ticks):
+        started = time.time()
+        try:
+            run_tick(ctx)
+        except Exception:
+            LOG.exception("❌ 第 %d/%d 轮 tick 异常（已兜底，继续后续轮次）", index + 1, ticks)
+            rc = 1
+        if not cfg["dry_run"]:
+            ctx.state.save()
+        if index + 1 < ticks:
+            elapsed = time.time() - started
+            sleep_for = max(1.0, cfg["tick_seconds"] - elapsed)
+            time.sleep(sleep_for)
+    state = ctx.state.data
+    print("📡 %d 轮后判定: %s | net=%s | mode=%s | fast=%d | fails=%d | streak=%d | lines=%s"
+          % (ticks, state.get("last_verdict"), state.get("last_net"), state.get("last_mode"),
+             1 if state.get("mode_state") == "fast" else 0,
+             int(state.get("fails", 0)), int(state.get("streak", 0)),
+             ",".join("%s=%s" % (k, v) for k, v in sorted((state.get("last_lines") or {}).items())) or "-"))
+    for line in state.get("last_detail") or []:
+        print("    · %s" % line)
+    return rc
 
 
 def cmd_status(cfg):
@@ -2140,9 +2317,10 @@ def cmd_selftest(cfg):
         report("⚠", "配置文件", "%s 不存在（使用默认值 + 进程环境变量）" % cfg["config_path"])
 
     # 9) 运行参数
-    report("📡", "运行参数", "role=%s targets=%s tick=%ds full=%ds fast=%ds dry_run=%s"
+    report("📡", "运行参数", "role=%s targets=%s tick=%ds full=%ds fast=%ds dry_run=%s switch_enabled=%d"
            % (cfg["role"], ",".join(cfg["targets"]), cfg["tick_seconds"],
-              cfg["full_probe_seconds"], cfg["fast_probe_seconds"], cfg["dry_run"]))
+              cfg["full_probe_seconds"], cfg["fast_probe_seconds"], cfg["dry_run"],
+              1 if cfg.get("switch_enabled", True) else 0))
 
     fails = [r for r in results if r[0] == "❌"]
     print("─" * 64)
@@ -2178,6 +2356,8 @@ def parse_args(argv):
         description="树莓派容灾观察者 / 切换执行器（纯标准库，契约 monitoring/DR-OBSERVER-CONTRACT.md）")
     parser.add_argument("--loop", action="store_true", help="常驻循环（systemd 用，30s 一 tick）")
     parser.add_argument("--once", action="store_true", help="只跑一轮后退出")
+    parser.add_argument("--ticks", type=int, default=0, metavar="N",
+                        help="同一进程内连续跑 N 轮 tick 后退出（测试/演练接缝，约等于 N 次 --once）")
     parser.add_argument("--dry-run", action="store_true",
                         help="不写 DNS、不写 TXT、不发邮件，只输出判定（可与 --once 组合）")
     parser.add_argument("--status", action="store_true", help="打印上次状态与最近判定")
@@ -2210,6 +2390,8 @@ def main(argv=None):
         return cmd_status(cfg)
     if args.loop:
         return cmd_loop(cfg)
+    if args.ticks and args.ticks > 0:
+        return cmd_ticks(cfg, args.ticks)
     if args.once:
         return cmd_once(cfg)
     parse_args(["--help"])
