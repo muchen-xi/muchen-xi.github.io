@@ -1,0 +1,31 @@
+# dr-agent — 树莓派容灾观察者（契约 monitoring/DR-OBSERVER-CONTRACT.md）
+#
+# 安装: sudo bash install.sh   （会 copy 到 /etc/systemd/system/dr-agent.service）
+# 日志: journalctl -u dr-agent -f
+[Unit]
+Description=DR Observer Agent (树莓派容灾观察者 / 切换执行器)
+Documentation=file:///opt/dr-agent/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/dr-agent.env
+ExecStart=/usr/bin/python3 /opt/dr-agent/dr_agent.py --loop
+WorkingDirectory=/opt/dr-agent
+# 状态目录（state.json / 轮转日志）；配合 ProtectSystem=strict 提供可写区
+StateDirectory=dr-agent
+ReadWritePaths=/var/lib/dr-agent
+Restart=always
+RestartSec=10
+# ── 加固 ──
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
