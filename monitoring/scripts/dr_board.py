@@ -219,14 +219,36 @@ def derive_starkeeper_mode(records) -> str:
 # 会签板读取容错 + peer 判定（契约 §二/§三）
 # ---------------------------------------------------------------------------
 
+def unescape_txt(value: str) -> str:
+    """反转义 DNS TXT 表示格式里的 \\" 与 \\\\。
+
+    实测（2026-09-11 真实 API）：写入 {"a":1} 读回 {\\"a\\":1}（阿里云自动转义内层双引号）；
+    写入 "quoted" 读回 quoted（外层引号被剥掉）。因此读取端必须反转义，
+    否则 JSON 解析失败 → peer 误判 absent → 恢复闸门失效（会签通道等于不通）。
+    只处理 \\" 与 \\\\（载荷是单行 ASCII JSON，不产生 \\n 等其它转义）。
+    """
+    out = []
+    i = 0
+    n = len(value)
+    while i < n:
+        c = value[i]
+        if c == "\\" and i + 1 < n and value[i + 1] in ('"', "\\"):
+            out.append(value[i + 1])
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def normalize_txt_value(raw) -> str:
-    """TXT 读取容错：去首尾空白；被双引号包裹则剥掉引号。"""
+    """TXT 读取容错：去首尾空白 → 剥外层双引号 → 反转义内层引号（见 unescape_txt）。"""
     if raw is None:
         return ""
     value = str(raw).strip()
     if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
         value = value[1:-1].strip()
-    return value
+    return unescape_txt(value)
 
 
 def parse_ts(value):
@@ -505,6 +527,12 @@ def cmd_selftest() -> int:
     check(normalize_txt_value('  "abc"  ') == "abc", "TXT 容错: 去空白 + 剥外层引号")
     check(normalize_txt_value('"  {"v":1}  "') == '{"v":1}', "TXT 容错: 剥引号后再去空白")
     check(normalize_txt_value(None) == "", "TXT 容错: None → 空")
+    # 阿里云 TXT 往返转义（2026-09-11 真实 API 实测）：写 {"a":1} 读回 {\"a\":1}
+    check(normalize_txt_value('{\\"v\\":1,\\"lines\\":{\\"www.default\\":\\"200\\"}}')
+          == '{"v":1,"lines":{"www.default":"200"}}', "TXT 容错: 反转义内层引号（阿里云表示格式）")
+    check(normalize_txt_value('"{\\"v\\":1}"') == '{"v":1}', "TXT 容错: 外层引号 + 内层转义同时存在")
+    check(normalize_txt_value('{\\"a\\":\\"x\\\\\\\\y\\"}') == '{"a":"x\\\\y"}', "TXT 容错: 双反斜杠还原")
+    check(normalize_txt_value("plain") == "plain", "TXT 容错: 无转义原样返回")
 
     # --- peer 缺省语义（整条 verdict） ---
     check(evaluate_peer(board(ts_offset=-60), now=base) == "healthy", "peer: 新鲜 healthy → healthy")

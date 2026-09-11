@@ -829,8 +829,29 @@ class Alerter(object):
 
 # ─────────────────────────── 会签板（契约第二节） ───────────────────────────
 
+def unescape_txt(value):
+    """反转义阿里云 TXT 表示格式里的 \\" 与 \\\\。
+
+    实测（2026-09-11 真实 API）：写入 {"a":1} 读回 {\\"a\\":1} —— 服务端在存储/返回时会自动
+    转义内层双引号。若不反转义，json.loads 必然失败 → 会签板被误判为不存在（心跳等于白写，
+    对方闸门失效）。只处理 \\" 与 \\\\（载荷是单行 ASCII JSON）。
+    """
+    out = []
+    i = 0
+    n = len(value)
+    while i < n:
+        c = value[i]
+        if c == "\\" and i + 1 < n and value[i + 1] in ('"', "\\"):
+            out.append(value[i + 1])
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def read_txt(ali, rr, log_degrade=True):
-    """读 TXT 值（去空白 / 剥引号）；失败返回 None，绝不抛。"""
+    """读 TXT 值（去空白 / 剥引号 / 反转义）；失败返回 None，绝不抛。"""
     if ali is None:
         return None
     try:
@@ -840,6 +861,7 @@ def read_txt(ali, rr, log_degrade=True):
         raw = (recs[0].get("value") or "").strip()
         if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
             raw = raw[1:-1]
+        raw = unescape_txt(raw)
         return raw or None
     except Exception as e:
         if log_degrade:
@@ -870,6 +892,7 @@ def write_txt(ali, rr, value):
             current = (recs[0].get("value") or "").strip()
             if len(current) >= 2 and current[0] == current[-1] and current[0] in ("'", '"'):
                 current = current[1:-1]
+            current = unescape_txt(current)   # 服务端会转义内层引号，比较前必须先还原
             if current == value:
                 return True
             ali.update(recs[0]["id"], rr, "TXT", value, "default", BOARD_TTL)
