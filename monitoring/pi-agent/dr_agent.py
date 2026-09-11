@@ -147,6 +147,7 @@ DEFAULT_CONFIG = {
     "DR_CLOCK_CHECK_SECONDS": str(CLOCK_CHECK_SECONDS),
     "DR_BOARD_WRITE_SECONDS": "300",
     "DR_SWITCH_ENABLED": "1",
+    "DR_LIGHT_PROBE": "curl",
     "DR_ALERT_ENABLED": "1",
     "DR_DRY_RUN": "0",
     "SMTP_SERVER": "smtp.qiye.aliyun.com",
@@ -324,6 +325,7 @@ def load_config(path, explicit=False, state_dir=None):
         "clock_check_seconds": max(60, _int_or(values.get("DR_CLOCK_CHECK_SECONDS"), CLOCK_CHECK_SECONDS)),
         "board_write_seconds": max(5, _int_or(values.get("DR_BOARD_WRITE_SECONDS"), 300)),
         "switch_enabled": _bool_or(values.get("DR_SWITCH_ENABLED"), True),
+        "light_probe": (values.get("DR_LIGHT_PROBE", "curl") or "curl").strip().lower(),
         "alert_enabled": _bool_or(values.get("DR_ALERT_ENABLED"), True),
         "dry_run": _bool_or(values.get("DR_DRY_RUN"), False),
         "smtp_server": (values.get("SMTP_SERVER", "smtp.qiye.aliyun.com") or "").strip(),
@@ -1396,22 +1398,52 @@ def _probe_degraded(ctx, res):
         res["lines"][key] = code
 
 
+LIGHT_PROBE_HOSTS = {
+    "www.default": HOST_WWW,
+    "www.oversea": HOST_WWW,
+    "starkeeper": HOST_STAR,
+}
+
+
 def light_probe(ctx):
-    """TCP 轻探最近一次权威查询缓存的 IP。返回 (ok, detail)。"""
+    """轻探最近一次权威查询缓存的 IP。返回 (ok, detail)。
+
+    模式由 DR_LIGHT_PROBE 决定：
+      curl（默认）—— 真发一次 HTTPS 请求（带白名单 UA），能看出 TLS/HTTP 层问题
+                     （5xx、证书、WAF 拦截）；代价是每个 tick 一次 TLS 握手，
+                     在 Zero W 上约 2~3 秒 CPU。
+      tcp         —— 只做三次握手（几百毫秒、零应用层开销），但 TCP 通不代表站点可用
+                     （TLS/证书/5xx 都看不出来）。
+    两条路径都只读不写；判定与计数逻辑完全一致。
+    """
+    mode = (ctx.cfg.get("light_probe") or "curl").lower()
     cache = ctx.state.data.get("tcp_cache") or {}
-    pairs = [(k, v) for k, v in cache.items() if v]
+    if mode == "tcp":
+        pairs = [(k, v) for k, v in cache.items() if v]
+    else:
+        # curl 模式一个 tick 只发一次请求：优先主站国内线路 www.default（受众入口），
+        # 其余线路由 5 分钟一次的完整探测覆盖。Zero W 上单次 HTTPS 约 2 秒 CPU，
+        # 三条都打会变成 20% 常驻占用 —— 没必要。
+        order = ("www.default", "www.oversea", "starkeeper")
+        pairs = [(k, cache[k]) for k in order if cache.get(k)][:1]
     if not pairs:
         return True, "无缓存 IP（下一轮将做完整探测）"
     bad = []
     good = []
     for key, ip in pairs:
-        if tcp_probe(ip):
-            good.append("%s(%s)" % (key, ip))
+        if mode == "tcp":
+            ok = tcp_probe(ip)
         else:
-            bad.append("%s(%s)" % (key, ip))
+            host = LIGHT_PROBE_HOSTS.get(key)
+            if not host:
+                continue
+            code = probe_http("https://%s/" % host,
+                              resolve="%s:443:%s" % (host, ip), timeout=6)
+            ok = ok_code(code)
+        (good if ok else bad).append("%s(%s)" % (key, ip))
     if bad:
-        return False, "TCP 轻探失败: " + ", ".join(bad)
-    return True, "TCP 轻探通过: " + ", ".join(good)
+        return False, "%s 轻探失败: %s" % (mode, ", ".join(bad))
+    return True, "%s 轻探通过: %s" % (mode, ", ".join(good))
 
 
 # ─────────────────────────── 切换 / 恢复动作 ───────────────────────────

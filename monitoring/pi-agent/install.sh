@@ -124,6 +124,8 @@ lines = [
     "DR_TICK_SECONDS=30",
     "DR_FULL_PROBE_SECONDS=300",
     "DR_FAST_PROBE_SECONDS=30",
+    "# 轻探模式：curl（默认，能看出 5xx/TLS 问题）/ tcp（最省 CPU）",
+    "DR_LIGHT_PROBE=curl",
     "",
     "# ── 阈值 ──",
     "DR_TCP_FAILS_TO_ESCALATE=2",

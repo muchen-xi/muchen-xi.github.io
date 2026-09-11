@@ -70,6 +70,7 @@ sudo -E ALI_KEY_ID=xxx ALI_KEY_SECRET=yyy \
 | `DR_ALERT_ENABLED` / `DR_DRY_RUN` | 1 / 0 | 开关 |
 | `DR_SWITCH_ENABLED` | 1 | 0 = 只闸住 DNS 写：判定满足时只告警不切换（探测/告警/心跳照常，上线验证用） |
 | `DR_BOARD_WRITE_SECONDS` | 300 | `_dr-pi` 心跳最小写入间隔；verdict/fails/fast/net/mode 变化时立即写 |
+| `DR_LIGHT_PROBE` | curl | 轻探模式：`curl` = 每 tick 真发一次 HTTPS（只打 `www.default`，能看出 5xx/TLS 问题，Zero W 上约 2 秒 CPU）；`tcp` = 只做三次握手（最省，但看不出应用层故障） |
 | `SMTP_*` / `REPORT_TO` | smtp.qiye.aliyun.com:465 | SMTP_SSL 告警 |
 
 缺 `ALI_KEY_ID/SECRET` 时：`--selftest` 明确报 ❌，`--loop` 拒绝启动（有意保护）。
