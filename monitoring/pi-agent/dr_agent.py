@@ -156,6 +156,7 @@ DEFAULT_CONFIG = {
     "DR_CLOCK_SKEW_MAX": "300",
     "DR_CLOCK_CHECK_SECONDS": str(CLOCK_CHECK_SECONDS),
     "DR_BOARD_WRITE_SECONDS": "300",
+    "DR_TEMP_WARN": "75",
     "DR_SWITCH_ENABLED": "1",
     "DR_LIGHT_PROBE": "curl",
     "DR_ALERT_ENABLED": "1",
@@ -334,6 +335,7 @@ def load_config(path, explicit=False, state_dir=None):
         "clock_skew_max": max(30, _int_or(values.get("DR_CLOCK_SKEW_MAX"), 300)),
         "clock_check_seconds": max(60, _int_or(values.get("DR_CLOCK_CHECK_SECONDS"), CLOCK_CHECK_SECONDS)),
         "board_write_seconds": max(5, _int_or(values.get("DR_BOARD_WRITE_SECONDS"), 300)),
+        "temp_warn": max(40, _int_or(values.get("DR_TEMP_WARN"), 75)),
         "switch_enabled": _bool_or(values.get("DR_SWITCH_ENABLED"), True),
         "light_probe": (values.get("DR_LIGHT_PROBE", "curl") or "curl").strip().lower(),
         "alert_enabled": _bool_or(values.get("DR_ALERT_ENABLED"), True),
@@ -2420,7 +2422,32 @@ def run_tick(ctx):
         heartbeat_check(ctx)
     except Exception:
         LOG.exception("❌ 心跳检查异常（已兜底）")
+    try:
+        temp_guard(ctx)
+    except Exception:
+        LOG.exception("❌ 温度检查异常（已兜底）")
     ctx.clock.refresh()
+
+
+def temp_guard(ctx):
+    """温度防线：无散热片的 24/7 节点，超阈值就告警（同类 30 分钟节流）。
+
+    Pi Zero W 在 80~85℃ 才开始降频；阈值默认 75℃，留出足够处置时间。
+    判定用 vcgencmd，非树莓派/取不到时静默跳过。
+    """
+    temp = read_temp()
+    if temp is None:
+        return
+    warn = ctx.cfg.get("temp_warn", 75)
+    if temp < warn:
+        return
+    ctx.alerts.send(
+        "temp_high", "[DR] ⚠ 树莓派温度偏高 %.1f ℃" % temp,
+        "当前温度: %.1f ℃（阈值 %d ℃）\n"
+        "降频点: 80~85 ℃（`vcgencmd get_throttled` 不为 0 即说明已发生降频）\n"
+        "影响: 温度接近降频点时探测会变慢；持续超阈值请检查通风/加装散热片\n"
+        "\n建议: 把它挪出密闭空间，或贴一块铝制散热片（几块钱，可降 5~10 ℃）。"
+        % (temp, warn))
 
 
 # ─────────────────────────── 子命令 ───────────────────────────

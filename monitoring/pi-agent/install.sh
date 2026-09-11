@@ -135,6 +135,8 @@ lines = [
     "DR_PEER_MAX_AGE_SECONDS=1200",
     "DR_CLOCK_SKEW_MAX=300",
     "DR_CLOCK_CHECK_SECONDS=1800",
+    "# 温度告警阈值（℃）；Zero W 在 80~85℃ 才降频",
+    "DR_TEMP_WARN=75",
     "",
     "# ── 上线档位开关（见 ROLLOUT.md 四档推进） ──",
     "# 只告警档：改成 0 —— 照常探测/告警/写心跳，但不碰 DNS（零风险验证凭据与邮件链路）",
