@@ -8,6 +8,10 @@ on:
         description: '补检模式（上次例行检查因 runner 不可用被放弃时，由补检守卫触发）'
         required: false
         type: boolean
+      force_restore:
+        description: '跳过国内观察者闸门，强制恢复主站'
+        required: false
+        type: boolean
 
 concurrency:
   group: failover-monitor       # 串行化，避免 schedule 与手动触发并发读写计数
@@ -21,6 +25,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: 推导权威状态（失败回退本地文件）
+        id: dr_mode
+        continue-on-error: true
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+        run: |
+          # 契约 §一/§五.2：从权威 A 记录推导当前状态；dr_board.py 缺失或 API/凭据故障时回退读本地文件（现行为）
+          FALLBACK=$(python3 -c "import json;print(json.load(open('monitoring/.failover_count.json')).get('mode','primary'))" 2>/dev/null || true)
+          FALLBACK=${FALLBACK:-primary}
+          DERIVED=$(python3 monitoring/scripts/dr_board.py mode www 2>/dev/null || true)
+          case "$DERIVED" in
+            primary|backup|mixed|empty) ;;
+            *) DERIVED="" ;;
+          esac
+          if [ -z "$DERIVED" ]; then
+            echo "::warning::dr_board.py mode www 推导失败（脚本未就绪/API 或凭据故障）— 回退本地文件 mode=$FALLBACK"
+            echo "mode=$FALLBACK" >> "$GITHUB_OUTPUT"
+            echo "derived=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "权威推导 mode=$DERIVED（本地文件 mode=$FALLBACK）"
+          # 契约 §五.3：以推导为准并回写文件，保证 update-dns.py 既有守卫同步收敛
+          python3 - "$DERIVED" <<'PY'
+          import json, sys
+          path = 'monitoring/.failover_count.json'
+          try:
+              with open(path) as f:
+                  data = json.load(f)
+          except Exception:
+              data = {}
+          data['mode'] = sys.argv[1]
+          with open(path, 'w') as f:
+              json.dump(data, f)
+          PY
+          echo "mode=$DERIVED" >> "$GITHUB_OUTPUT"
+          echo "derived=true" >> "$GITHUB_OUTPUT"
+          if [ "$DERIVED" = "mixed" ] || [ "$DERIVED" = "empty" ]; then
+            echo "::warning::权威状态为 $DERIVED — 按保持现状处理，本轮不触发切换/恢复"
+          fi
 
       - name: 读取容灾状态
         id: state_file
@@ -43,14 +88,17 @@ jobs:
           ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
           ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
         run: |
-          MODE="${{ steps.state_file.outputs.mode }}"
+          MODE="${{ steps.dr_mode.outputs.mode || steps.state_file.outputs.mode }}"
           STATUS=""
+          DEF_STATUS_OUT=""
+          OVA_STATUS_OUT=""
           if [ "$MODE" = "backup" ]; then
             # 容灾期间直连保存的主站 IP 检测主站本身，避免检测到备站(健康)而误判"主站已恢复"
             MAIN_IP=$(python3 -c "import json;print(json.load(open('monitoring/.failover_state.json')).get('www',[''])[0])" 2>/dev/null || true)
             if [ -n "$MAIN_IP" ]; then
               echo "backup 模式 — 直连主站 IP $MAIN_IP 检测"
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --resolve www.chenxiuniverse.top:443:$MAIN_IP --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null || true)
+              DEF_STATUS_OUT="$STATUS"
             fi
           fi
           if [ -z "$STATUS" ]; then
@@ -63,11 +111,13 @@ jobs:
             OVA_BAD=""
             if [ -n "$DEF_IP" ]; then
               DEF_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --resolve www.chenxiuniverse.top:443:$DEF_IP --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null || true)
+              DEF_STATUS_OUT="${DEF_STATUS:-000}"
               echo "primary 模式 — default $DEF_IP 直连: HTTP ${DEF_STATUS:-000}"
               { [ "${DEF_STATUS:-000}" -ge 500 ] 2>/dev/null || [ "${DEF_STATUS:-000}" = "000" ]; } && DEF_BAD=1
             fi
             if [ -n "$OVA_IP" ]; then
               OVA_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --resolve www.chenxiuniverse.top:443:$OVA_IP --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null || true)
+              OVA_STATUS_OUT="${OVA_STATUS:-000}"
               echo "primary 模式 — oversea $OVA_IP 直连: HTTP ${OVA_STATUS:-000}"
               { [ "${OVA_STATUS:-000}" -ge 500 ] 2>/dev/null || [ "${OVA_STATUS:-000}" = "000" ]; } && OVA_BAD=1
             fi
@@ -88,6 +138,8 @@ jobs:
           fi
           STATUS=${STATUS:-000}
           echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "def_status=$DEF_STATUS_OUT" >> $GITHUB_OUTPUT
+          echo "ova_status=$OVA_STATUS_OUT" >> $GITHUB_OUTPUT
           echo "主站状态码: $STATUS (mode=$MODE)"
           if [ "$STATUS" -ge 200 ] 2>/dev/null && [ "$STATUS" -lt 500 ] 2>/dev/null; then
             echo "healthy=true" >> $GITHUB_OUTPUT
@@ -96,7 +148,7 @@ jobs:
           fi
 
       - name: 检查备站可达性 (Vercel)
-        if: steps.state_file.outputs.mode == 'backup'
+        if: (steps.dr_mode.outputs.mode || steps.state_file.outputs.mode) == 'backup'
         run: |
           # backup 模式下 DNS 已指向 Vercel，普通 curl 检测备站可达性（仅观测告警，不触发任何切换）
           BACKUP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -A "chenxiuniverse-monitor/1.0" --connect-timeout 10 --max-time 15 https://www.chenxiuniverse.top 2>/dev/null || true)
@@ -109,12 +161,31 @@ jobs:
             python3 monitoring/scripts/monitor_logger.py failover-check --status fail --http-code "$BACKUP_STATUS"
           fi
 
+      - name: 树莓派心跳检查（仅告警，不影响切换决策）
+        if: always()
+        continue-on-error: true
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+        run: |
+          # 契约 §二/§五.4：对方心跳过期/缺失只告警与记事件，绝不参与或阻断任何切换决策
+          PEER=""
+          if ! PEER=$(python3 monitoring/scripts/dr_board.py peer _dr-pi 2>/dev/null); then
+            echo "::warning::无法读取树莓派观察者心跳（会签通道/API 故障）"
+            exit 0
+          fi
+          echo "_dr-pi 整体判定 (max-age 1200s, 不带 --target) = $PEER"
+          if [ "$PEER" = "stale" ] || [ "$PEER" = "absent" ]; then
+            echo "::warning::树莓派观察者心跳过期/缺失（国内视角失明）"
+            python3 monitoring/scripts/monitor_logger.py dr-observer --verdict "$PEER" --detail "树莓派心跳 $PEER（超过 max-age 1200s 或记录缺失），国内视角失明" || true
+          fi
+
       - name: 更新计数并决策
         id: decision
         run: |
           FAILS=${{ steps.state_file.outputs.fails }}
           STREAK=${{ steps.state_file.outputs.healthy_streak }}
-          MODE=${{ steps.state_file.outputs.mode }}
+          MODE="${{ steps.dr_mode.outputs.mode || steps.state_file.outputs.mode }}"
           HEALTHY=${{ steps.check.outputs.healthy }}
           if [ "$HEALTHY" = "true" ]; then
             NEW_FAILS=0
@@ -129,18 +200,69 @@ jobs:
           with open('monitoring/.failover_count.json', 'w') as f:
               json.dump(d, f)
           PY
-          if [ "$HEALTHY" = "false" ] && [ "$NEW_FAILS" -ge 3 ] && [ "$MODE" != "backup" ]; then
-            echo "trigger_backup=true" >> $GITHUB_OUTPUT
-            echo "::warning::连续 $NEW_FAILS 次失败，触发容灾切换"
-          else
+          echo "fails=$NEW_FAILS" >> $GITHUB_OUTPUT
+          echo "streak=$NEW_STREAK" >> $GITHUB_OUTPUT
+          if [ "$MODE" = "mixed" ] || [ "$MODE" = "empty" ]; then
+            # 契约 §四：mixed/empty 一律保持现状，不切换也不恢复，只告警
+            echo "::warning::权威状态为 $MODE — 保持现状，本轮不触发切换/恢复"
             echo "trigger_backup=false" >> $GITHUB_OUTPUT
-          fi
-          if [ "$HEALTHY" = "true" ] && [ "$NEW_STREAK" -ge 3 ] && [ "$MODE" = "backup" ]; then
-            echo "trigger_restore=true" >> $GITHUB_OUTPUT
-          else
             echo "trigger_restore=false" >> $GITHUB_OUTPUT
+          else
+            if [ "$HEALTHY" = "false" ] && [ "$NEW_FAILS" -ge 3 ] && [ "$MODE" != "backup" ]; then
+              echo "trigger_backup=true" >> $GITHUB_OUTPUT
+              echo "::warning::连续 $NEW_FAILS 次失败，触发容灾切换"
+            else
+              echo "trigger_backup=false" >> $GITHUB_OUTPUT
+            fi
+            if [ "$HEALTHY" = "true" ] && [ "$NEW_STREAK" -ge 3 ] && [ "$MODE" = "backup" ]; then
+              echo "trigger_restore=true" >> $GITHUB_OUTPUT
+            else
+              echo "trigger_restore=false" >> $GITHUB_OUTPUT
+            fi
           fi
           echo "结果: fails=$NEW_FAILS streak=$NEW_STREAK mode=$MODE healthy=$HEALTHY"
+
+      - name: 恢复闸门（国内观察者会签；dr_board 故障放行）
+        id: gate
+        if: steps.decision.outputs.trigger_restore == 'true'
+        continue-on-error: true
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+        run: |
+          ALLOW=true
+          if [ "${{ github.event.inputs.force_restore }}" = "true" ]; then
+            echo "::warning::force_restore=true — 跳过国内观察者闸门，强制恢复主站"
+          else
+            PEER=""
+            if ! PEER=$(python3 monitoring/scripts/dr_board.py peer _dr-pi --target www 2>/dev/null); then
+              # 契约 §五.1：会签通道故障绝不阻断容灾，放行恢复
+              echo "::warning::dr_board.py peer 查询失败 — 会签通道故障，放行恢复"
+            else
+              echo "国内观察者 _dr-pi --target www = $PEER"
+              case "$PEER" in
+                unhealthy)
+                  ALLOW=false
+                  echo "::warning::树莓派（国内视角）判定仍不健康，跳过自动恢复"
+                  python3 monitoring/scripts/monitor_logger.py dr-observer --verdict unhealthy --detail "恢复闸门拦截(www)：_dr-pi --target www 判定 unhealthy，保持 backup 不恢复" || true
+                  ;;
+                stale)
+                  echo "::warning::降级运行：国内观察者失联（stale），放行恢复"
+                  ;;
+                absent)
+                  echo "::warning::降级运行：国内观察者失联（absent），放行恢复"
+                  ;;
+                healthy)
+                  echo "闸门通过：国内观察者判定 healthy"
+                  ;;
+                *)
+                  echo "闸门通过：peer 返回 ${PEER:-unknown}，放行恢复"
+                  ;;
+              esac
+            fi
+          fi
+          echo "allow=$ALLOW" >> "$GITHUB_OUTPUT"
+          echo "恢复闸门结果: allow=$ALLOW"
 
       - name: DNS切到备站
         id: backup
@@ -165,7 +287,7 @@ jobs:
 
       - name: DNS恢复到主站
         id: restore
-        if: steps.decision.outputs.trigger_restore == 'true'
+        if: steps.decision.outputs.trigger_restore == 'true' && steps.gate.outputs.allow != 'false'
         run: |
           pip install -q alibabacloud_alidns20150109
           python3 monitoring/scripts/failover-dns.py restore
@@ -221,3 +343,98 @@ jobs:
             git commit -m "📝 容灾监控事件记录"
             git push
           fi
+
+      - name: 写云侧心跳 _dr-gh（best-effort，契约 §2.1）
+        if: always()
+        continue-on-error: true
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+          DR_HEALTHY: "${{ steps.check.outputs.healthy }}"
+          DR_STATUS: "${{ steps.check.outputs.status }}"
+          DR_DEF_STATUS: "${{ steps.check.outputs.def_status }}"
+          DR_OVA_STATUS: "${{ steps.check.outputs.ova_status }}"
+          DR_DERIVED: "${{ steps.dr_mode.outputs.derived }}"
+          DR_MODE: "${{ steps.dr_mode.outputs.mode || steps.state_file.outputs.mode }}"
+          DR_FAILS: "${{ steps.decision.outputs.fails }}"
+          DR_RUN_NUMBER: "${{ github.run_number }}"
+        run: |
+          # 单一写入方：_dr-gh 只由本 workflow 写（starkeeper-monitor 只读不写）；gh 不写 temp/up
+          python3 - <<'PY'
+          import datetime, json, os, subprocess
+
+          def env(name, default=""):
+              return (os.environ.get(name) or "").strip() or default
+
+          derived_ok = env("DR_DERIVED") == "true"
+          status = env("DR_STATUS")
+          if derived_ok or (status and status != "000"):
+              net = "ok"
+          else:
+              net = "broken"
+
+          healthy = env("DR_HEALTHY")
+          if healthy == "true":
+              verdict = "healthy"
+          elif healthy == "false" and net == "ok":
+              verdict = "unhealthy"
+          else:
+              verdict = "unknown"
+
+          lines = {}
+          if env("DR_DEF_STATUS"):
+              lines["www.default"] = env("DR_DEF_STATUS")
+          if env("DR_OVA_STATUS"):
+              lines["www.oversea"] = env("DR_OVA_STATUS")
+          if not lines and status:
+              # backup 直连主站 IP / 回退普通 DNS 时无法分线路观测，退化为单条 www.default
+              lines["www.default"] = status
+
+          try:
+              fails = int(env("DR_FAILS", "0"))
+          except ValueError:
+              fails = 0
+
+          seq = None
+          try:
+              got = subprocess.run(
+                  ["python3", "monitoring/scripts/dr_board.py", "get", "_dr-gh"],
+                  capture_output=True, text=True, timeout=30)
+              if got.returncode == 0 and got.stdout.strip():
+                  seq = int(json.loads(got.stdout.strip()).get("seq", 0)) + 1
+          except Exception:
+              seq = None
+          if seq is None:
+              # 读不到上一条时退化为 run_number（单调度器内单调递增，防 seq 卡死误报）
+              try:
+                  seq = int(env("DR_RUN_NUMBER", "1"))
+              except ValueError:
+                  seq = 1
+
+          payload = {
+              "v": 1,
+              "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "who": "gh",
+              "seq": seq,
+              "verdict": verdict,
+              "net": net,
+              "mode": env("DR_MODE", "primary"),
+              "fast": 0,
+              "fails": fails,
+              "lines": lines,
+          }
+          value = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+          if len(value.encode("utf-8")) > 255:
+              payload["lines"].pop("www.oversea", None)
+              value = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+          if len(value.encode("utf-8")) > 255:
+              payload["lines"] = {}
+              value = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+          res = subprocess.run(
+              ["python3", "monitoring/scripts/dr_board.py", "set", "_dr-gh", value],
+              capture_output=True, text=True, timeout=60)
+          if res.returncode != 0:
+              print("::warning::写 _dr-gh 失败（best-effort，不影响本轮判定）: " + (res.stderr or "").strip()[:200])
+          else:
+              print("已写云侧心跳 _dr-gh: " + value)
+          PY

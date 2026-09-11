@@ -15,6 +15,8 @@
   REPORT_STATS_SECRET            — 流量统计端点 Bearer 密钥
 """
 
+import contextlib
+import io
 import json
 import os
 import smtplib
@@ -84,7 +86,7 @@ def get_current_dns_state() -> dict:
                 key = f"{rr}.{line}"
                 state[key] = {
                     "ips": sorted(ips),
-                    "is_backup": _is_gh_pages(ips),
+                    "backend": _classify_backend(ips),
                 }
         return state
     except Exception as e:
@@ -92,12 +94,29 @@ def get_current_dns_state() -> dict:
         return {}
 
 
-def _is_gh_pages(ips: list[str]) -> bool:
-    """判断 IP 列表是否为 GitHub Pages 备站"""
-    gh_prefixes = ("185.199.108.", "185.199.109.", "185.199.110.", "185.199.111.")
-    if not ips:
-        return False
-    return all(any(ip.startswith(p) for p in gh_prefixes) for ip in ips)
+# 备站识别（2026-09-11 修复：容灾实测 www 已切到 Vercel 76.76.21.21，
+# 旧 _is_gh_pages 只认 GH Pages 前缀，把备站误标成"主站 CF"）
+GH_PAGES_PREFIXES = ("185.199.108.", "185.199.109.", "185.199.110.", "185.199.111.")
+VERCEL_IPS = {"76.76.21.21"}
+
+
+def _is_backup_ip(ip: str) -> bool:
+    """单个 IP 是否属于备站（GH Pages 或 Vercel）"""
+    return ip in VERCEL_IPS or any(ip.startswith(p) for p in GH_PAGES_PREFIXES)
+
+
+def _classify_backend(ips: list[str]) -> str:
+    """识别 A 记录 IP 列表对应后端，返回 primary / gh / vercel / mixed（备站混合）。
+
+    全部属于备站（GH Pages / Vercel）才算备站，与旧 _is_gh_pages 的语义一致；
+    混合备站（Vercel+GH 并存）返回 mixed，部分备站部分主站仍按 primary 处理。
+    """
+    if not ips or not all(_is_backup_ip(ip) for ip in ips):
+        return "primary"
+    kinds = {"vercel" if ip in VERCEL_IPS else "gh" for ip in ips}
+    if len(kinds) == 1:
+        return kinds.pop()
+    return "mixed"
 
 
 # ─── 事件读取 ───
@@ -137,6 +156,138 @@ def read_stats(since_days: int = 7) -> dict:
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
     return {k: v for k, v in sorted(all_stats.items()) if k >= cutoff}
+
+
+# ─── 树莓派观察者（_dr-pi 会签板，best-effort） ───
+
+DR_PI_RECORD = "_dr-pi"
+DR_PI_STALE_SECONDS = 20 * 60  # 心跳 ts 超过 20 分钟视为失联
+
+
+def _load_dr_board():
+    """加载同目录 dr_board 模块（importlib 兜底）；不可用返回 None（报告照常生成）。"""
+    try:
+        import dr_board  # type: ignore
+        return dr_board
+    except Exception:
+        pass
+
+    try:
+        import importlib.util
+        dr_path = Path(__file__).resolve().parent / "dr_board.py"
+        if not dr_path.exists():
+            return None
+        spec = importlib.util.spec_from_file_location("dr_board", dr_path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+def _get_board_record(module, record: str):
+    """调用 dr_board 读取记录。
+
+    优先语义 API get(record)；兼容 dr_board.py 实际提供的 read_record_value(record)
+    与 cmd_get(record)（值打印到 stdout，此处捕获；退出码 3 = 记录不存在）。
+    """
+    fn = getattr(module, "get", None)
+    if callable(fn):
+        return fn(record)
+
+    fn = getattr(module, "read_record_value", None)
+    if callable(fn):
+        return fn(record)
+
+    cmd = getattr(module, "cmd_get", None)
+    if callable(cmd):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cmd(record)
+        if rc == 3:
+            return None  # 记录不存在
+        if rc != 0:
+            raise RuntimeError(f"dr_board cmd_get({record}) 退出码 {rc}")
+        text = buf.getvalue().strip()
+        return text or None
+    raise AttributeError("dr_board 未提供 get / read_record_value / cmd_get")
+
+
+def get_pi_observer() -> dict:
+    """读取树莓派观察者心跳 _dr-pi（best-effort）。
+
+    会签板不可用 / 记录不存在 / 格式异常一律返回 {}，报告照常生成。
+    """
+    try:
+        module = _load_dr_board()
+        if module is None:
+            return {}
+        raw = _get_board_record(module, DR_PI_RECORD)
+        if raw is None:
+            return {}
+        text = str(raw).strip()
+        if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+            text = text[1:-1]
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    except (Exception, SystemExit):
+        return {}
+
+
+def build_observer_section() -> str:
+    """生成「树莓派观察者」卡片 HTML：心跳时间、是否在线、判定、线路 HTTP 码、温度。"""
+    try:
+        pi = get_pi_observer()
+        if not pi:
+            return ('<div class="card"><p class="label">暂未收到树莓派观察者数据'
+                    '（_dr-pi 会签板不可用或观察者尚未上线）</p></div>')
+
+        ts_raw = str(pi.get("ts", "") or "")
+        age = None
+        try:
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - ts).total_seconds()
+        except (ValueError, TypeError):
+            age = None
+
+        if age is None:
+            online_html = '<span class="warn">⚠ 心跳时间戳异常</span>'
+            age_txt = "?"
+        elif age > DR_PI_STALE_SECONDS:
+            online_html = '<span class="bad">❌ 失联（超过 20 分钟）</span>'
+            age_txt = f"{int(age // 60)} 分钟前"
+        else:
+            online_html = '<span class="good">✅ 在线</span>'
+            age_txt = f"{int(max(age, 0) // 60)} 分钟前"
+
+        verdict = str(pi.get("verdict", "unknown"))
+        verdict_icon = {"healthy": "✅", "unhealthy": "❌"}.get(verdict, "⚠️")
+
+        lines = pi.get("lines")
+        if isinstance(lines, dict) and lines:
+            lines_txt = " · ".join(f"{k}: {v}" for k, v in lines.items())
+        else:
+            lines_txt = "—"
+
+        temp = pi.get("temp")
+        temp_txt = f"{temp} ℃" if isinstance(temp, (int, float)) else "—"
+        ts_txt = ts_raw.replace("T", " ").replace("Z", " UTC") if ts_raw else "?"
+
+        return f"""<div class="card">
+  <table>
+    <tr><td class="label">心跳时间</td><td>{ts_txt}（{age_txt}）</td></tr>
+    <tr><td class="label">状态</td><td>{online_html}</td></tr>
+    <tr><td class="label">站点判定</td><td>{verdict_icon} {verdict}</td></tr>
+    <tr><td class="label">线路 HTTP 码</td><td style="font-family:monospace;font-size:0.85em">{lines_txt}</td></tr>
+    <tr><td class="label">树莓派温度</td><td>{temp_txt}</td></tr>
+  </table>
+</div>"""
+    except Exception as e:
+        return f'<div class="card"><p class="label">观察者数据解析失败: {e}</p></div>'
 
 
 # ─── 流量统计 ───
@@ -236,6 +387,7 @@ def build_html(report_type: str) -> str:
     events = read_events(since_hours=hours)
     stats = read_stats(since_days=stats_days)
     dns = get_current_dns_state()
+    observer_section = build_observer_section()
     traffic = get_traffic_stats(days=(1 if report_type == "daily" else 7))
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -262,8 +414,15 @@ def build_html(report_type: str) -> str:
                     "⚠ DNS 状态查询失败 / 数据不可用（阿里云凭据或端点异常）</td></tr>")
     for key, info in dns.items():
         rr, line = key.split(".", 1)
-        status_class = "tag-backup" if info["is_backup"] else "tag-primary"
-        status_text = "备站 GH" if info["is_backup"] else "主站 CF"
+        backend = info.get("backend", "primary")
+        if backend == "vercel":
+            status_class, status_text = "tag-backup", "备站 Vercel"
+        elif backend == "gh":
+            status_class, status_text = "tag-backup", "备站 GH"
+        elif backend == "mixed":
+            status_class, status_text = "tag-backup", "备站 混合"
+        else:
+            status_class, status_text = "tag-primary", "主站 CF"
         ips_html = "<br>".join(info["ips"]) if info["ips"] else "—"
         dns_rows += f"""<tr>
             <td>{rr}.{DOMAIN}</td>
@@ -347,6 +506,9 @@ def build_html(report_type: str) -> str:
     {dns_rows}
   </table>
 </div>
+
+<h2>🖥️ 树莓派观察者</h2>
+{observer_section}
 
 <h2>📈 页面访问量</h2>
 <div class="card">

@@ -29,14 +29,22 @@ DNS 架构 (post CF Pages 迁移):
   2026-08-15 演练修复：backup 时若状态文件已存在且有效则保留旧快照
   （记录的是主站健康时的 IP），避免把"被攻击/黑洞"的当前记录存为恢复目标；
   restore 前对 www 目标 IP 做健康校验，不可达的跳过/兜底，防止恢复回坏 IP。
+
+会签板（2026-09-11 树莓派观察者上线）:
+  每次 backup/restore 完成后 best-effort 写 _dr-snap（dr_board.set，契约 v1 第二节），
+  保留既有主站 IP 数组、只更新 ts/who/dir；状态文件缺失时 restore 会先读 _dr-snap
+  再退回内置 fallback。会签板任何读写失败只打 ⚠ 日志，绝不影响切换与退出码。
 """
 
+import contextlib
+import io
 import json
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 from alibabacloud_alidns20150109.client import Client as AlidnsClient
 from alibabacloud_alidns20150109 import models as alidns_models
@@ -82,6 +90,200 @@ FAILOVER_TARGETS = [
 def state_key(rr: str, line: str) -> str:
     """状态文件里的 key：default 线路用 rr 本身，其他线路加后缀避免同名冲突。"""
     return rr if line == "default" else f"{rr}_{line}"
+
+
+# ---------------------------------------------------------------------------
+# 会签板 _dr-snap 读写（best-effort，契约 v1 第二节）
+#
+# 谁切换谁写：本脚本每次 backup/restore 后写 _dr-snap，既留恢复目标，也让两侧
+# 观察者能据此判断"最近一次切换动作时间"（最小驻留时间）。任何一步失败只打
+# ⚠ 日志，绝不阻断 DNS 切换、绝不影响退出码。
+# ---------------------------------------------------------------------------
+
+DR_BOARD_SNAP_RECORD = "_dr-snap"
+DR_SNAP_MAX_BYTES = 255  # TXT 记录值 ≤255 字节（超长按契约裁剪）
+
+
+def _load_dr_board():
+    """加载同目录 dr_board 模块（importlib 兜底）；不可用返回 None，由调用方降级。"""
+    try:
+        import dr_board  # type: ignore
+        return dr_board
+    except Exception:
+        pass
+
+    try:
+        import importlib.util
+        dr_path = Path(__file__).resolve().parent / "dr_board.py"
+        if not dr_path.exists():
+            return None
+        spec = importlib.util.spec_from_file_location("dr_board", dr_path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+def _get_record_value(module, record: str) -> Optional[str]:
+    """调用 dr_board 读取记录。
+
+    优先语义 API get(record)；兼容 dr_board.py 实际提供的 read_record_value(record)
+    与 cmd_get(record)（值打印到 stdout，此处捕获；退出码 3 = 记录不存在）。
+    """
+    fn = getattr(module, "get", None)
+    if callable(fn):
+        return fn(record)
+
+    fn = getattr(module, "read_record_value", None)
+    if callable(fn):
+        return fn(record)
+
+    cmd = getattr(module, "cmd_get", None)
+    if callable(cmd):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cmd(record)
+        if rc == 3:
+            return None  # 记录不存在
+        if rc != 0:
+            raise RuntimeError(f"dr_board cmd_get({record}) 退出码 {rc}")
+        text = buf.getvalue().strip()
+        return text or None
+    raise AttributeError("dr_board 未提供 get / read_record_value / cmd_get")
+
+
+def _set_record_value(module, record: str, value: str) -> None:
+    """调用 dr_board 写入记录；失败抛异常，由 write_dr_snap 统一降级。
+
+    优先语义 API set(record, value)；兼容 dr_board.py 实际提供的 cmd_set（退出码 0 = 成功）。
+    """
+    fn = getattr(module, "set", None)
+    if callable(fn):
+        result = fn(record, value)
+        if result is False:
+            raise RuntimeError("dr_board.set 返回失败")
+        return
+
+    cmd = getattr(module, "cmd_set", None)
+    if callable(cmd):
+        rc = cmd(record, value)
+        if rc != 0:
+            raise RuntimeError(f"dr_board cmd_set({record}) 退出码 {rc}")
+        return
+    raise AttributeError("dr_board 未提供 set / cmd_set")
+
+
+def _dr_board_get(record: str) -> Optional[str]:
+    """读会签板记录原始值（去引号）；模块缺失或读取失败返回 None。"""
+    module = _load_dr_board()
+    if module is None:
+        return None
+    try:
+        value = _get_record_value(module, record)
+    except (Exception, SystemExit) as e:
+        print(f"⚠ 会签板读取失败 ({record}): {e}", file=sys.stderr)
+        return None
+    if value is None:
+        return None
+    text = str(value).strip()
+    # 契约读取容错：值被双引号包裹时剥掉引号
+    if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+        text = text[1:-1]
+    return text or None
+
+
+def _dr_board_set(record: str, value: str) -> None:
+    """写会签板记录；失败抛异常，由 write_dr_snap 统一降级。"""
+    module = _load_dr_board()
+    if module is None:
+        raise RuntimeError("dr_board 模块不可用（会签板降级）")
+    _set_record_value(module, record, value)
+
+
+def read_dr_snap() -> dict:
+    """读取并校验 _dr-snap；不存在 / 解析失败 / 非对象一律返回 {}（视为无快照）。
+
+    只保留契约字段并校验 IP 数组格式，防止脏数据进入恢复目标。
+    """
+    raw = _dr_board_get(DR_BOARD_SNAP_RECORD)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    snap: dict = {}
+    for key in ("v", "ts", "who", "dir"):
+        if key in data:
+            snap[key] = data[key]
+    for key in ("www", "www_oversea", "starkeeper"):
+        if _valid_ip_list(data.get(key)):
+            snap[key] = list(data[key])
+    return snap
+
+
+def _trim_dr_snap(snap: dict) -> dict:
+    """按契约裁剪 _dr-snap 至 ≤255 字节：先删 starkeeper → 数组截到 2 → 截到 1。"""
+    def _size(d: dict) -> int:
+        return len(json.dumps(d, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+    if _size(snap) <= DR_SNAP_MAX_BYTES:
+        return snap
+    snap.pop("starkeeper", None)
+    if _size(snap) <= DR_SNAP_MAX_BYTES:
+        return snap
+    for key in ("www", "www_oversea"):
+        if isinstance(snap.get(key), list):
+            snap[key] = snap[key][:2]
+    if _size(snap) <= DR_SNAP_MAX_BYTES:
+        return snap
+    for key in ("www", "www_oversea"):
+        if isinstance(snap.get(key), list):
+            snap[key] = snap[key][:1]
+    return snap
+
+
+def _valid_ip_list(value) -> bool:
+    """判断是否为非空的字符串 IP 数组（用于快照防污染校验）。"""
+    return isinstance(value, list) and bool(value) and all(isinstance(x, str) and x for x in value)
+
+
+def write_dr_snap(direction: str, source_ips: Optional[dict] = None) -> bool:
+    """best-effort 写 _dr-snap（dir=backup/restore）。
+
+    语义（契约 2.2）：
+      - 已存在且有效的快照：保留其 IP 数组（防污染），只更新 ts/who/dir；
+      - 缺失的数组用 source_ips（保存状态 / 本次恢复目标里的主站 IP）补齐。
+    任何失败只打 ⚠ 并返回 False，绝不抛出、绝不阻断切换。
+    """
+    try:
+        existing = read_dr_snap()
+        snap = {
+            "v": 1,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "who": "gh",
+            "dir": direction,
+        }
+        for key in ("www", "www_oversea", "starkeeper"):
+            if _valid_ip_list(existing.get(key)):
+                snap[key] = list(existing[key])  # 保留既有主站原始 IP（恢复目标）
+            elif source_ips and _valid_ip_list(source_ips.get(key)):
+                snap[key] = list(source_ips[key])
+
+        snap = _trim_dr_snap(snap)
+        payload = json.dumps(snap, ensure_ascii=False, separators=(",", ":"))
+        _dr_board_set(DR_BOARD_SNAP_RECORD, payload)
+        print(f"📌 _dr-snap 已写入会签板 (dir={direction})")
+        return True
+    except (Exception, SystemExit) as e:
+        print(f"⚠ _dr-snap 写入失败（不影响切换结果与退出码）: {e}", file=sys.stderr)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -389,10 +591,13 @@ def cmd_backup(
 
     if dry_run:
         print(f"\n⚠ DRY RUN 完成 — 未实际修改 DNS")
-    elif changed_any:
-        print(f"\nOK DNS 已切到备站 (Vercel) @ {time.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
-        print(f"\n  无需变更")
+        # 切换完成后 best-effort 写 _dr-snap：保留既有主站 IP 数组，只更新 ts/who/dir
+        write_dr_snap("backup", state)
+        if changed_any:
+            print(f"\nOK DNS 已切到备站 (Vercel) @ {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            print(f"\n  无需变更")
 
 
 def cmd_restore(
@@ -410,12 +615,14 @@ def cmd_restore(
             saved_state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
             print(f"📂 读取状态文件 (保存于 {saved_state.get('timestamp', '?')})")
         except Exception as e:
-            print(f"⚠ 状态文件解析失败: {e}，使用 fallback IPs", file=sys.stderr)
+            print(f"⚠ 状态文件解析失败: {e}，将按 _dr-snap → 内置 fallback 顺序兜底", file=sys.stderr)
     else:
-        print(f"⚠ 状态文件不存在 ({STATE_FILE})，使用内置 fallback CF IPs", file=sys.stderr)
+        print(f"⚠ 状态文件不存在 ({STATE_FILE})，将按 _dr-snap → 内置 fallback 顺序兜底", file=sys.stderr)
 
-    # 2. 逐个恢复
+    # 2. 逐个恢复（降级链：状态文件 → _dr-snap 会签板 → 内置 fallback CF IPs）
     changed_any = False
+    snap_state: Optional[dict] = None  # 懒加载：状态文件缺该目标时才读 _dr-snap
+    restored_ips: dict = {}            # 本次实际写回的主站 IP，用于补全 _dr-snap
     for target in targets:
         rr = target["rr"]
         line = target["line"]
@@ -424,6 +631,13 @@ def cmd_restore(
 
         # 区分"保存过但为空"(恢复为空，不新增记录) 与"从未保存"(fallback 兜底)
         target_ips = saved_state.get(key) if saved_state else None
+        if target_ips is None:
+            # 状态文件不存在 / 解析失败 / 缺该目标：先尝试 _dr-snap 会签板
+            if snap_state is None:
+                snap_state = read_dr_snap()
+            target_ips = snap_state.get(key)
+            if target_ips is not None:
+                print(f"  📂 {rr} ({line}): 状态文件无快照，改用 _dr-snap 会签板恢复目标 -> {target_ips}")
         if target_ips is None:
             target_ips = list(FALLBACK_CF_IPS)
             print(f"  ⚠ {rr} ({line}): 无保存的 IP，fallback -> {target_ips}")
@@ -447,6 +661,7 @@ def cmd_restore(
 
         if update_to_ips(client, rr, line, target_ips, dry_run):
             changed_any = True
+            restored_ips[key] = list(target_ips)
             if dry_run:
                 print(f"    [DRY RUN] 将恢复 {rr} ({line}) -> CF 优选 IPs")
             else:
@@ -457,6 +672,8 @@ def cmd_restore(
     if dry_run:
         print(f"\n⚠ DRY RUN 完成 — 未实际修改 DNS")
     elif changed_any:
+        # 恢复成功后 best-effort 写 _dr-snap（dir=restore，保留/补全主站 IP 数组）
+        write_dr_snap("restore", restored_ips)
         print(f"\nOK DNS 已恢复到主站 (CF Pages) @ {time.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
         print(f"\n  无需变更")

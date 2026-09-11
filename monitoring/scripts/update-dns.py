@@ -21,12 +21,15 @@ RecordId 管理:
   未设置时自动从 DNS 查询获取。
 """
 
+import contextlib
 import csv
+import io
 import json
 import os
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 from alibabacloud_alidns20150109.client import Client as AlidnsClient
 from alibabacloud_alidns20150109 import models as alidns_models
@@ -85,6 +88,97 @@ def is_starkeeper_backup() -> bool:
         return d.get("mode") == "backup"
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# 权威记录守卫（二级防线，2026-09-11 树莓派观察者上线）
+#
+# 树莓派观察者会独立执行 DNS 切换，但它无法更新仓库里的 .failover_count.json /
+# starkeeper_state.json。只靠文件守卫时，优选流程会在 6 小时内把容灾切换覆盖掉
+# （与 2026-06-27 P0 自伤事故同一剧本）。因此文件守卫未命中时，再从阿里云权威
+# A 记录推导一次状态（dr_board.derive_mode，见 DR-OBSERVER-CONTRACT.md 第一节）。
+# 一切推导失败（模块缺失 / 无凭据 / API 异常）都必须降级为"沿用文件守卫"，
+# 绝不能让优选流程整体失败。
+# ---------------------------------------------------------------------------
+
+DR_BOARD_TARGET_WWW = "www"
+DR_BOARD_TARGET_STARKEEPER = "starkeeper"
+
+
+def _load_dr_board():
+    """加载同目录 dr_board 模块；不可用返回 None，由调用方降级。"""
+    # 快路径：脚本目录通常已在 sys.path（python3 monitoring/scripts/update-dns.py）
+    try:
+        import dr_board  # type: ignore
+        return dr_board
+    except Exception:
+        pass
+
+    # 兜底：按文件路径加载（脚本被其它模块 import / sys.path 不含脚本目录时）
+    try:
+        import importlib.util
+        dr_path = Path(__file__).resolve().parent / "dr_board.py"
+        if not dr_path.exists():
+            return None
+        spec = importlib.util.spec_from_file_location("dr_board", dr_path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+def _derive_mode(module, target: str) -> Optional[str]:
+    """调用 dr_board 推导权威模式。
+
+    优先语义 API derive_mode(target)；兼容 dr_board.py 实际提供的
+    cmd_mode(target)（结果打印到 stdout，此处捕获）以及
+    derive_www_mode / derive_starkeeper_mode + list_records 组合。
+    """
+    fn = getattr(module, "derive_mode", None)
+    if callable(fn):
+        return fn(target)
+
+    cmd = getattr(module, "cmd_mode", None)
+    if callable(cmd):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cmd(target)
+        if rc != 0:
+            raise RuntimeError(f"dr_board cmd_mode({target}) 退出码 {rc}")
+        lines = [ln.strip() for ln in buf.getvalue().splitlines() if ln.strip()]
+        return lines[-1] if lines else None
+
+    if target == "www":
+        fn = getattr(module, "derive_www_mode", None)
+        if callable(fn):
+            return fn(module.list_records("www", "A"))
+    else:
+        fn = getattr(module, "derive_starkeeper_mode", None)
+        if callable(fn):
+            return fn(module.list_records("starkeeper"))
+    raise AttributeError("dr_board 未提供 derive_mode / cmd_mode / derive_*_mode")
+
+
+def derive_mode_from_board(target: str) -> Optional[str]:
+    """从权威 A 记录推导目标状态（dr_board）。
+
+    返回 primary / backup / mixed / empty；模块缺失、无凭据或 API 失败
+    一律返回 None（降级为"只用现有文件守卫"，绝不影响优选流程）。
+    """
+    module = _load_dr_board()
+    if module is None:
+        return None
+    try:
+        mode = _derive_mode(module, target)
+    except (Exception, SystemExit) as e:
+        print(f"⚠ 权威记录推导失败 ({target}): {e} — 沿用文件守卫", file=sys.stderr)
+        return None
+    if not isinstance(mode, str):
+        return None
+    return mode.strip().lower() or None
 
 
 def read_ips(csv_path: str, top_n: int = TOP_N) -> list[str]:
@@ -256,13 +350,30 @@ def main():
     print(f"境外优选 IP ({len(overseas_ips)}): {overseas_ips}")
     print(f"境内优选 IP ({len(china_ips)}): {china_ips}")
 
-    # 容灾备份模式保护：跳过容灾目标，避免 IP 优选把 DNS 切回主站破坏容灾
+    # 容灾备份模式保护：跳过容灾目标，避免 IP 优选把 DNS 切回主站破坏容灾。
+    # 两级守卫：一级 = 仓库文件（快路径）；二级 = 权威 A 记录推导
+    # （树莓派独立切换时仓库文件不会更新，必须靠权威记录兜住）。
     backup_mode = is_failover_backup()
     if backup_mode:
         print("⚠ 检测到容灾备份模式 (mode=backup) — 跳过 www/pimanager 更新，避免破坏容灾切换")
+    else:
+        dr_mode = derive_mode_from_board(DR_BOARD_TARGET_WWW)
+        if dr_mode == "backup":
+            backup_mode = True
+            print("⚠ 权威记录显示主站处于容灾备站状态 — 跳过 www/pimanager 更新，避免破坏容灾切换")
+        elif dr_mode:
+            print(f"🔎 权威记录显示 www 模式为 {dr_mode}，继续优选更新")
+
     starkeeper_backup = is_starkeeper_backup()
     if starkeeper_backup:
         print("⚠ 星钥官网容灾备份模式 (starkeeper_state.json) — 跳过 starkeeper 更新")
+    else:
+        dr_mode = derive_mode_from_board(DR_BOARD_TARGET_STARKEEPER)
+        if dr_mode == "backup":
+            starkeeper_backup = True
+            print("⚠ 权威记录显示星钥官网处于容灾备站状态 — 跳过 starkeeper 更新")
+        elif dr_mode:
+            print(f"🔎 权威记录显示 starkeeper 模式为 {dr_mode}，继续优选更新")
 
     if dry_run:
         print("⚠ DRY RUN 模式 — 不会实际修改 DNS\n")

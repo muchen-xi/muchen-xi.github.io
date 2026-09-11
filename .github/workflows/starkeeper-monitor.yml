@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '*/5 * * * *'     # 每5分钟
   workflow_dispatch:            # 手动触发
+    inputs:
+      force_restore:
+        description: '跳过国内观察者闸门，强制恢复主站'
+        required: false
+        type: boolean
 
 concurrency:
   group: starkeeper-monitor     # 串行化，防 schedule 与手动触发并发读写状态
@@ -68,13 +73,49 @@ jobs:
               NEW_STREAK=$((STREAK + 1))
               if [ "$NEW_STREAK" -ge 3 ]; then
                 # 容灾期间官方入口连续健康 → 恢复优选 IP 直连（restore 内置候选池可达性验证）
-                echo "恢复条件满足 (healthy_streak=$NEW_STREAK)，尝试 restore"
-                if python3 monitoring/scripts/starkeeper_dns.py restore; then
-                  ACTION=restore
-                  NEW_MODE=primary
-                  NEW_STREAK=0
+                GATE_OK=1
+                if [ "${{ github.event.inputs.force_restore }}" = "true" ]; then
+                  echo "::warning::force_restore=true — 跳过国内观察者闸门，强制恢复主站"
                 else
-                  echo "::warning::restore 失败（候选池不可达），保持 backup"
+                  # 恢复闸门：对方（树莓派，国内视角）明确 unhealthy 则不恢复；stale/absent 降级放行
+                  PEER=""
+                  if ! PEER=$(python3 monitoring/scripts/dr_board.py peer _dr-pi --target starkeeper 2>/dev/null); then
+                    echo "::warning::dr_board.py peer 查询失败 — 会签通道故障，放行恢复"
+                  else
+                    echo "国内观察者 _dr-pi --target starkeeper = $PEER"
+                    case "$PEER" in
+                      unhealthy)
+                        GATE_OK=0
+                        echo "::warning::树莓派（国内视角）判定仍不健康，跳过自动恢复"
+                        python3 monitoring/scripts/monitor_logger.py dr-observer --verdict unhealthy --detail "恢复闸门拦截(starkeeper)：_dr-pi --target starkeeper 判定 unhealthy，保持 backup 不恢复" || true
+                        ;;
+                      stale)
+                        echo "::warning::降级运行：国内观察者失联（stale），放行恢复"
+                        ;;
+                      absent)
+                        echo "::warning::降级运行：国内观察者失联（absent），放行恢复"
+                        ;;
+                      healthy)
+                        echo "闸门通过：国内观察者判定 healthy"
+                        ;;
+                      *)
+                        echo "闸门通过：peer 返回 ${PEER:-unknown}，放行恢复"
+                        ;;
+                    esac
+                  fi
+                fi
+                if [ "$GATE_OK" = "1" ]; then
+                  echo "恢复条件满足 (healthy_streak=$NEW_STREAK)，尝试 restore"
+                  if python3 monitoring/scripts/starkeeper_dns.py restore; then
+                    ACTION=restore
+                    NEW_MODE=primary
+                    NEW_STREAK=0
+                  else
+                    echo "::warning::restore 失败（候选池不可达），保持 backup"
+                    NEW_STREAK=0
+                  fi
+                else
+                  # 闸门拦截视同恢复未执行：保持 backup，重计连续健康
                   NEW_STREAK=0
                 fi
               fi

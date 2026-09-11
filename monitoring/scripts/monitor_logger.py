@@ -5,6 +5,7 @@
   python monitoring/scripts/monitor_logger.py failover-check --status ok|fail [--http-code 200]
   python monitoring/scripts/monitor_logger.py failover-action --action backup|restore [--target www.default]
   python monitoring/scripts/monitor_logger.py ip-update --overseas "1.2.3.4,5.6.7.8" --china "9.10.11.12" [--changed]
+  python monitoring/scripts/monitor_logger.py dr-observer --verdict healthy|unhealthy|unknown [--detail "..."] [--target www]
 
 事件以独立 JSON 文件写入 logs/events/，文件名含时间戳。
 并发 workflow 各写各的文件，零冲突。
@@ -12,6 +13,8 @@
 设计约束:
   - 每 5 分钟的例行健康检查不写事件（288条/天太吵）
   - 只记录: 状态变化(backup/restore)、IP 更新、异常故障
+  - dr-observer（树莓派观察者心跳/判定）只写事件文件，不计入 stats.json 检查计数
+    （避免 5 分钟一轮的上报污染可用率统计）
   - 另外维护一个轻量的 stats.json 汇总当日统计（检查次数、故障次数）
 """
 
@@ -121,6 +124,22 @@ def cmd_ip_update():
     log_event("ip_update", data)
 
 
+def cmd_dr_observer():
+    """记录树莓派观察者心跳/判定事件（dr-observer）。
+
+    只写 logs/events/*_dr_observer.json，不更新 stats.json 的任何计数，
+    避免观察者高频上报被计入"健康检查次数"污染可用率。
+    """
+    verdict = get_arg("--verdict") or "unknown"
+    target = get_arg("--target") or "www"
+    detail = get_arg("--detail")
+
+    data = {"verdict": verdict, "target": target}
+    if detail:
+        data["detail"] = detail
+    log_event("dr_observer", data)
+
+
 def print_usage():
     print(__doc__)
     sys.exit(1)
@@ -139,6 +158,8 @@ def main():
         cmd_failover_action()
     elif cmd == "ip-update":
         cmd_ip_update()
+    elif cmd == "dr-observer":
+        cmd_dr_observer()
     else:
         print(f"❌ 未知命令: {cmd}")
         print_usage()
