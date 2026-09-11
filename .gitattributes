@@ -1,0 +1,9 @@
+# 行尾策略
+#
+# 本机 core.autocrlf=true，会把仓库文件转成 CRLF。但这两类文件要在 Linux 上直接执行，
+# CRLF 会让 shebang（#!/usr/bin/env bash）失效、bash 报 "\r: command not found"：
+#   - monitoring/pi-agent/**  树莓派部署包（install.sh / systemd unit / Python agent）
+#   - *.sh 脚本
+# 其余文件维持默认（不影响现有工作流）。
+monitoring/pi-agent/** text eol=lf
+*.sh text eol=lf
