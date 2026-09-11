@@ -63,6 +63,7 @@ import json
 import logging
 import os
 import random
+import re
 import shutil
 import smtplib
 import socket
@@ -76,6 +77,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from email.header import Header
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, parsedate_to_datetime
 from logging.handlers import RotatingFileHandler
@@ -797,7 +799,12 @@ def read_sys_uptime():
 
 
 class Alerter(object):
-    """SMTP_SSL 告警；同类 30 分钟节流；DRY-RUN / 未配置时静默跳过。"""
+    """SMTP_SSL 告警；同类 30 分钟节流；DRY-RUN / 未配置时静默跳过。
+
+    邮件是一封 multipart/alternative：纯文本正文 + 排好版的 HTML 卡片
+    （状态色标 / 分区块 / 数据表 / 页脚署名）。HTML 由 _alert_html() 从既有主题与
+    正文智能渲染——严重级别直接取自主题里的 emoji，因此**不需要改动任何调用点**。
+    """
 
     def __init__(self, cfg, state):
         self.cfg = cfg
@@ -824,7 +831,10 @@ class Alerter(object):
             LOG.info("🔕 同类告警节流中（%s），跳过: %s", kind, subject)
             return False
         try:
-            msg = MIMEText(body, "plain", "utf-8")
+            # multipart/alternative：纯文本兜底 + HTML 卡片（邮件客户端按能力择一显示）
+            msg = MIMEMultipart("alternative")
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+            msg.attach(MIMEText(_alert_html(subject, body), "html", "utf-8"))
             msg["Subject"] = Header(subject, "utf-8")
             msg["From"] = formataddr((str(Header(self.cfg["smtp_sender_name"], "utf-8")),
                                       self.cfg["smtp_username"]))
@@ -838,6 +848,111 @@ class Alerter(object):
         except Exception as e:
             LOG.warning("⚠ 告警邮件发送失败（不影响主流程）: %s", e)
             return False
+
+
+# ─────────────────────────── 告警邮件排版（HTML 卡片） ───────────────────────────
+
+# 严重级别取自主题里的 emoji（既有调用点无需改动）
+_ALERT_LEVELS = [
+    ("❌", "严重", "#dc2626", "#fef2f2"),
+    ("⚠", "警告", "#d97706", "#fffbeb"),
+    ("🔁", "已执行", "#2563eb", "#eff6ff"),
+    ("✅", "正常", "#16a34a", "#f0fdf4"),
+    ("📡", "心跳", "#4f46e5", "#eef2ff"),
+]
+
+
+def _html_escape(text):
+    return (str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _alert_level(subject):
+    for emoji, label, color, bg in _ALERT_LEVELS:
+        if emoji in subject:
+            return label, color, bg
+    return "通知", "#4f46e5", "#eef2ff"
+
+
+def _alert_body_html(body):
+    """把纯文本正文排版成卡片内容：`键: 值` 成行内数据表，`·`/`-` 开头成项目符号，其余成段落。"""
+    rows, bullets, paras = [], [], []
+    for raw in (body or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line[0] in "·-•*" and len(line) > 1:
+            bullets.append(line.lstrip("·-•* ").strip())
+            continue
+        m = re.match(r"^([^:：]{1,24})[:：]\s*(.+)$", line)
+        if m and not line.startswith("http"):
+            rows.append((m.group(1).strip(), m.group(2).strip()))
+            continue
+        paras.append(line)
+
+    out = []
+    for p in paras:
+        out.append('<p style="margin:0 0 10px 0;">{p}</p>'.format(p=_html_escape(p)))
+    if bullets:
+        items = "".join(
+            '<li style="margin:2px 0;">{b}</li>'.format(b=_html_escape(b)) for b in bullets)
+        out.append('<ul style="margin:6px 0 12px 0;padding-left:20px;color:#374151;">{i}</ul>'.format(i=items))
+    if rows:
+        trs = "".join(
+            '<tr>'
+            '<td style="padding:7px 12px;background:#f9fafb;color:#6b7280;font-size:13px;'
+            'border-bottom:1px solid #eef0f3;white-space:nowrap;vertical-align:top;">{k}</td>'
+            '<td style="padding:7px 12px;color:#111827;font-size:13px;border-bottom:1px solid #eef0f3;'
+            'word-break:break-all;">{v}</td></tr>'.format(k=_html_escape(k), v=_html_escape(v))
+            for k, v in rows)
+        out.append(
+            '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+            'style="margin:10px 0 4px 0;border:1px solid #eef0f3;border-radius:8px;'
+            'border-collapse:separate;overflow:hidden;">{rows}</table>'.format(rows=trs))
+    return "".join(out) or '<p style="margin:0;color:#6b7280;">（无正文）</p>'
+
+
+def _alert_html(subject, body):
+    """渲染告警卡片（邮件客户端兼容：table 布局 + 全内联样式，不引用任何外部资源）。"""
+    label, color, bg = _alert_level(subject)
+    title = subject
+    for emoji, _l, _c, _b in _ALERT_LEVELS:
+        title = title.replace(emoji, "").strip()
+    ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    return """\
+<div style="background:#f3f4f6;padding:24px 12px;font-family:-apple-system,BlinkMacSystemFont,\
+'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;\
+margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+<tr><td style="background:#0f1420;padding:20px 24px;">
+  <div style="font-size:11px;letter-spacing:2.5px;color:#8b95a5;">CHENXIUNIVERSE · 容灾观察者</div>
+  <div style="font-size:19px;font-weight:600;color:#ffffff;margin-top:8px;line-height:1.4;">{title}</div>
+  <div style="margin-top:12px;">
+    <span style="display:inline-block;padding:3px 12px;border-radius:999px;background:{color};\
+color:#ffffff;font-size:12px;font-weight:500;">{label}</span>
+    <span style="font-size:12px;color:#8b95a5;margin-left:10px;">{ts}</span>
+  </div>
+</td></tr>
+<tr><td style="padding:22px 24px;color:#1f2937;font-size:14px;line-height:1.75;">
+{body}
+</td></tr>
+<tr><td style="padding:16px 24px;background:#f9fafb;border-top:1px solid #e5e7eb;\
+color:#6b7280;font-size:12px;line-height:1.7;">
+  <b style="color:#374151;">这封邮件是什么</b><br>
+  由树莓派 Zero W 上的 dr-agent 自动发出——它是主站的国内独立观察者，
+  每 30 秒轻探一次、每 5 分钟完整探测，故障时可直接切备并通知你。<br>
+  <b style="color:#374151;">需要对端复核</b>：云侧监控（GitHub Actions）读取会签板
+  <span style="font-family:ui-monospace,Consolas,monospace;">_dr-pi</span> 上的同一份判定。<br>
+  <b style="color:#374151;">人工干预</b>：GitHub Actions → 容灾监控 → Run workflow →
+  勾选 <span style="font-family:ui-monospace,Consolas,monospace;">force_restore</span>。
+</td></tr>
+</table>
+</div>""".format(
+        title=_html_escape(title or subject),
+        label=_html_escape(label),
+        color=color,
+        ts=ts,
+        body=_alert_body_html(body),
+    )
 
 
 # ─────────────────────────── 会签板（契约第二节） ───────────────────────────
