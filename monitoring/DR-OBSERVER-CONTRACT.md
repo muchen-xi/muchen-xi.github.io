@@ -50,11 +50,26 @@ BACKUP_SET   = VERCEL_IPS ∪ GH_PAGES_IPS
 | `mode` | `primary` / `backup` / `mixed` / `empty` | 写入该条时**观察到的**权威状态 |
 | `fast` | `0` / `1` | 是否处于快通道（可疑升频）模式 |
 | `fails` | 整数 | 当前连续不健康计数 |
-| `lines` | 对象 | 每条线路最近一次 HTTP 码字符串；`000` = 不可达。**规范 key**：`www.default`、`www.oversea`、`starkeeper` |
+| `lines` | 对象 | **始终表示"主站路径"**的探测码（HTTP 码字符串；`000` = 不可达）。primary 语义下 = 权威记录直连探测码；backup/mixed 语义下 = `_dr-snap` 主站 IP 的直连探测码（恢复判定路径）。**规范 key**：`www.default`、`www.oversea`、`starkeeper`；快照无对应主站 IP 时该 key 省略（宁缺毋滥，绝不用备站入口码冒充主站） |
+| `live` | 对象，可选 | backup/mixed 语义下的**当前入口**（备站 Vercel / CNAME）探测码，key 同 `lines`；仅展示，**不参与 `peer --target` 闸门判定**。primary 语义不写。超长裁剪时优先删除（先删 `starkeeper` 键） |
 | `temp` | 数字，可选 | 树莓派温度（℃） |
 | `up` | 整数，可选 | 进程连续运行秒数 |
 
-`gh` 不写 `temp`/`up`。未知字段读取方一律忽略。
+**两种语义下的 `lines`**（2026-09-12 修复，演练缺陷 2）：
+
+```json
+primary: {"v":1,"ts":"...","who":"pi","seq":42,"verdict":"healthy","net":"ok","mode":"primary","fast":0,"fails":0,"lines":{"www.default":"200","www.oversea":"200","starkeeper":"200"}}
+backup:  {"v":1,"ts":"...","who":"pi","seq":43,"verdict":"unhealthy","net":"ok","mode":"backup","fast":0,"fails":3,"lines":{"www.default":"000","www.oversea":"000"},"live":{"www.default":"200","www.oversea":"200"}}
+```
+
+> ⚠️ `lines` 在两种语义下都表示**主站路径**，这正是恢复闸门能防拉锯的前提：
+> 若 backup 语义下 `lines` 写的是备站入口码（200），`peer --target www` 会返回
+> `healthy`，云侧恢复闸门被误放行——当故障形态是"CF IP 境内被墙、境外正常"时，
+> 云侧会立刻把站点恢复回坏 IP，来回拉锯。因此 `peer --target <t>` 的目标语义
+> （§三）表达的是"**国内视角下主站路径是否恢复**"，备站入口状态只通过 `live`
+> 供人查看。备份语义下"主站不健康"是预期状态，写入方不得据此进入切换评估。
+
+`gh` 不写 `temp`/`up`/`live`。未知字段读取方一律忽略。
 
 ### 2.2 快照记录 schema（`_dr-snap`）
 
@@ -69,8 +84,11 @@ BACKUP_SET   = VERCEL_IPS ∪ GH_PAGES_IPS
 | `dir` | `backup` / `restore` | 最近一次动作方向 |
 | `www` / `www_oversea` / `starkeeper` | IP 字符串数组 | **主站原始 IP**（恢复目标），不是备站 IP |
 
-**写入语义**
-- `backup` 时：若已存在且有效快照，**保留其 IP 数组**（防污染，与 `.failover_state.json` 同规则），只更新 `ts`/`who`/`dir`。
+**写入语义**（2026-09-12 演练修复后的优先级，**不得回退**）
+1. **优先用"最后一次健康时的主站 IP"**（`last_good_ips`：权威查询成功且该线路探测健康时记录；**IP 组里含备站 IP 则整组不记**，避免备站驻留期把 Vercel IP 记成主站 IP）。
+2. 没有 `last_good_ips` 时，**保留已存在且有效的旧快照 IP 数组**（与 `.failover_state.json` 同规则），只更新 `ts`/`who`/`dir`。
+3. 两者都没有 → **只写 `ts`/`who`/`dir`，不写 IP 数组** + `⚠` 日志。
+   ⚠️ **绝不允许**把"切换瞬间的当前记录"当恢复目标——2026-09-12 演练实测：首次切换时那正是攻击注入的黑洞 IP，恢复方会把它当救命稻草。
 - `restore` 时：写 `dir="restore"` + 新 `ts`，IP 数组保留（主站 IP 依然有效）。
 - **写入失败绝不允许阻断 DNS 切换**（best-effort，只记日志）。
 
@@ -121,6 +139,13 @@ BACKUP_SET   = VERCEL_IPS ∪ GH_PAGES_IPS
   → 执行恢复；恢复后写 _dr-snap(dir=restore)
 
 强制恢复：workflow_dispatch 输入 force_restore=true → 跳过条件 3、4（保留人工最终权威）。
+
+状态迁移时计数必须归零（2026-09-12 演练修复，两侧对称，不得回退）：
+  当权威推导出的 mode 与上一次记录的 mode 不同（primary↔backup/mixed/empty）时，
+  fails 与 streak 一律清零后再进入本轮计数。
+  理由：演练实测云侧 healthy_streak 从故障前继承到 630、Pi 侧 fails 在 backup 期累积——
+  前者让备份模式第一轮就恢复，后者让恢复回 primary 后 1 次探测即切换；两者都是"跳过连续 N 次确认"，
+  会放大来回拉锯。归零后任何决策都必须重新积累满 N 次证据。
 ```
 
 - **对方失联不阻断恢复**（`stale`/`absent` 视为通过），但要在告警里标注降级运行。

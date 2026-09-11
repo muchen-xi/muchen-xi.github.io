@@ -5,20 +5,27 @@
 一键运行:
   python monitoring/tests/test_coop_scenarios.py
 
-覆盖 S0-S12（详见 monitoring/tests/README.md）：
+覆盖 S0-S14（详见 monitoring/tests/README.md）：
   S0  mock 契约自检（签名校验 / Duplicate / DomainRecords=null 边界 / 超时注入）
   S1  健康：主站在线 → 不切换、判定 healthy、云侧 mode=primary
-  S2  黑洞注入：连续 3 次不健康 → 切换 www→Vercel + 写 _dr-snap + 云侧 mode=backup
+  S2  黑洞注入：连续 3 次不健康 → 切换 www→Vercel + 无 last_good 时快照只写 ts/who/dir
+      （绝不把黑洞当恢复目标）+ 云侧 mode=backup
   S3  拉锯防护：mode=backup + peer(_dr-pi--target www)=unhealthy → 云侧规则不得恢复
-  S4  阶段一：DR_ROLE=switch_only 即使判定恢复也只告警、不动 DNS
+  S4  阶段一：DR_ROLE=switch_only 即使判定恢复也只告警、不动 DNS；backup 语义下
+      lines=主站路径码（快照 IP 可达→200）、live=备站入口码，peer --target www=healthy
   S5  Pi 失联降级：_dr-pi stale/absent → 云侧放行恢复（显式断言规则）
   S6  快照防污染：已有有效 _dr-snap 时切换只更新 ts/who/dir，IP 数组不变
   S7  时钟防线：skew>300s → allow_write()=False 且拒绝 DNS 写
-  S8  幂等：zone 已是 backup → 拒绝切换、不改快照、不重复写记录
+  S8  备份语义静默：zone 已是 backup + 主站未恢复 → 不评估切换、无"拒绝覆盖"告警、
+      lines=主站路径 000 / live=备站入口 200、peer --target www=unhealthy（防拉锯闸门）
   S9  API 故障降级：Describe 500 → agent verdict=unknown 不切换；dr_board 失败退出 1
-  S10 验证档：DR_SWITCH_ENABLED=0 + 黑洞 → 不写 DNS、无快照、只告警、心跳照常
+  S10 验证档：DR_SWITCH_ENABLED=0 + 黑洞（primary）→ 不写 DNS、无快照、只告警、心跳照常
   S11 心跳降频：DR_BOARD_WRITE_SECONDS 生效；状态变化立即写；ts 不超时
   S12 starkeeper 安全：先建后删，任何失败都不留无记录裸域
+  S13 缺陷 5：backup 语义不评估切换（fails 超阈值也无 switch_refused 告警/无拒绝
+      warning），对照 primary 语义同轮数会真的切换
+  S14 缺陷 1：快照优先取 last_good_ips（预置后黑洞切换，存健康主站 IP 而非黑洞）；
+      无 last_good 时保留有效旧快照数组；两者皆无只写 ts/who/dir
 
 约定
   - 所有阿里云 API 打到本进程内嵌的 mock（monitoring/tests/mock_alidns.py），
@@ -404,6 +411,19 @@ def s1(t):
         t.check_eq(zone_id_value_map(srv, "www", "A"), before, "www 记录（RecordId/Value）完全未动")
         mode = run_board(srv.url, ["mode", "www"])
         t.check_eq((mode.returncode, mode.stdout.strip()), (0, "primary"), "云侧 dr_board mode www → primary")
+
+        # 缺陷 1 前半：权威查询成功且线路探测健康时，持久化"最后一次健康时的主站 IP"
+        state_file = os.path.join(state_dir, "state.json")
+        saved = {}
+        if os.path.exists(state_file):
+            with open(state_file, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+        lg = saved.get("last_good_ips") or {}
+        t.check_eq(sorted(lg.get("www.default") or []), sorted([CF_IP_A, CF_IP_B]),
+                   "state.last_good_ips[www.default] = 健康时的权威 IP 集合")
+        t.check_eq(sorted(lg.get("www.oversea") or []), [CF_IP_OVERSEA],
+                   "state.last_good_ips[www.oversea] = 健康时的权威 IP")
+        t.check("starkeeper" not in lg, "DR_TARGETS=www：不记录未探测目标的 last_good_ips")
     finally:
         srv.stop()
         shutil.rmtree(tmp, ignore_errors=True)
@@ -433,12 +453,17 @@ def s2(t):
         snap = board_json(srv, "_dr-snap")
         t.check(snap is not None, "_dr-snap 已写入")
         if snap:
-            t.check_eq(sorted(snap.get("www") or []), [BLACKHOLE], "快照 www = 切换前的主站 IP")
-            t.check_eq(sorted(snap.get("www_oversea") or []), [BLACKHOLE], "快照 www_oversea = 切换前的主站 IP")
+            # 缺陷 1（2026-09-12 演练修复）：此前无快照、也无 last_good_ips（全程黑洞），
+            # 新行为是"不写数组"，而不是把当前的黑洞记录当恢复目标写进去。
+            t.check("www" not in snap and "www_oversea" not in snap,
+                    "无 last_good_ips：快照不写 www/www_oversea 数组（黑洞 IP 未成为恢复目标）")
             t.check_eq(snap.get("dir"), "backup", "快照 dir=backup")
             t.check_eq(snap.get("who"), "pi", "快照 who=pi")
+            t.check_eq(snap.get("v"), 1, "快照 v=1")
+        t.check("不写 IP 数组" in out, "日志明确警告只写 ts/who/dir、不写 IP 数组")
         pi = board_json(srv, "_dr-pi")
         t.check(pi is not None and pi.get("verdict") == "unhealthy", "切换瞬间 _dr-pi.verdict=unhealthy（对端可见的原始证据）")
+        t.check(pi is not None and "live" not in pi, "primary 语义 _dr-pi 不写 live 字段（行为不变）")
         mode = run_board(srv.url, ["mode", "www"])
         t.check_eq((mode.returncode, mode.stdout.strip()), (0, "backup"), "云侧 dr_board mode www → backup")
     finally:
@@ -511,6 +536,23 @@ def s4(t):
         t.check_eq(zone_id_value_map(srv, "www", "A"), before_zone, "zone 保持 Vercel（未执行恢复）")
         snap = srv.get_record("_dr-snap", "TXT", "default")
         t.check(snap is not None and snap["Value"] == snap_value, "_dr-snap 未被改写")
+
+        # 缺陷 2（契约 2.1，2026-09-12 修复）：backup 语义下 lines=主站路径（快照 CF IP
+        # 可达 → 200），当前入口（Vercel）的码进 live；闸门因此能表达"主站已恢复"。
+        pi = board_json(srv, "_dr-pi")
+        t.check(pi is not None and pi.get("verdict") == "healthy", "backup 语义 _dr-pi.verdict=healthy")
+        if pi:
+            t.check_eq((pi.get("lines") or {}).get("www.default"), "200",
+                       "backup 语义 lines[www.default]=主站路径探测码（快照 CF IP）")
+            t.check_eq((pi.get("lines") or {}).get("www.oversea"), "200",
+                       "backup 语义 lines[www.oversea]=主站路径探测码（快照 CF IP）")
+            t.check_eq((pi.get("live") or {}).get("www.default"), "200",
+                       "backup 语义 live[www.default]=当前入口（Vercel）探测码")
+            t.check_eq((pi.get("live") or {}).get("www.oversea"), "200",
+                       "backup 语义 live[www.oversea]=当前入口（Vercel）探测码")
+        peer = run_board(srv.url, ["peer", "_dr-pi", "--target", "www"])
+        t.check_eq((peer.returncode, peer.stdout.strip()), (0, "healthy"),
+                   "主站路径已恢复 → peer --target www = healthy（闸门可放行）")
     finally:
         srv.stop()
         shutil.rmtree(tmp, ignore_errors=True)
@@ -616,6 +658,9 @@ def s7(t):
         ctx.clock.skew = 999.0
         ctx.clock.checked_at = time.time()
         ctx.state.data["fails"] = 3  # 已满足连续不健康阈值，唯一闸门就是时钟
+        # 预置 last_mode：权威状态迁移会归零 fails/streak（2026-09-12 演练修复），
+        # 若留默认的 empty，本轮 empty→primary 迁移会把上面的预设清零，就测不到时钟闸门了。
+        ctx.state.data["last_mode"] = "primary"
         ctx.state.data["last_full_probe_epoch"] = 0.0
 
         # 冻结自身网络探针与周期校时（测试专用 monkeypatch，保证 skew 不被覆盖）
@@ -668,7 +713,7 @@ def _make_log_handler(collector):
 
 # ─────────────────────────── S8 幂等 ───────────────────────────
 
-@scenario("S8", "幂等：zone 已是 backup → 拒绝切换、不改快照、不重复写记录")
+@scenario("S8", "备份语义静默：不评估切换（无拒绝告警），lines=主站路径、live=备站入口")
 def s8(t):
     srv = mock_alidns.start_mock()
     tmp, cfg_path, state_dir = make_env()
@@ -687,7 +732,10 @@ def s8(t):
         proc, elapsed = run_agent(cfg_path, state_dir, srv.url, ["--ticks", "3"], timeout=240)
         out = proc.stdout + proc.stderr
         t.check_eq(proc.returncode, 0, "agent --ticks 3 退出码 0")
-        t.check("幂等保护" in out, "输出出现『幂等保护』（状态 backup 拒绝覆盖）")
+        # 缺陷 5（2026-09-12 修复）：backup 语义不再进入切换评估。
+        # 注意 fails 已到阈值（旧实现会在下一轮进入"幂等保护拒绝"告警路径）。
+        t.check("拒绝覆盖" not in out and "幂等保护" not in out and "以下目标不切换" not in out,
+                "无『拒绝覆盖/幂等保护/以下目标不切换』噪音（backup 语义不评估切换）")
         t.check("✅ 切换完成" not in out, "没有出现『切换完成』")
         t.check_eq(zone_id_value_map(srv, "www", "A"), before_zone, "www 记录与 RecordId 完全未动")
         t.check_eq(len(srv.get_all("www", "A")), 2, "没有重复写记录")
@@ -697,7 +745,22 @@ def s8(t):
         after_other = [r for r in srv.dump_zone() if r["RR"] != "_dr-pi"]
         t.check_eq(len(after_other), len(before_other), "除 _dr-pi 心跳外 zone 记录数不变（无重复写）")
         pi = board_json(srv, "_dr-pi")
-        t.check(pi is not None and pi.get("verdict") == "unhealthy", "_dr-pi 心跳仍在写（verdict=unhealthy）")
+        t.check(pi is not None and pi.get("verdict") == "unhealthy", "_dr-pi 心跳仍在写（verdict=unhealthy，主站未恢复）")
+        if pi:
+            t.check_eq(pi.get("mode"), "backup", "_dr-pi.mode=backup")
+            t.check(int(pi.get("fails", 0)) >= 3, "fails 已到切换阈值（%s）但未触发任何切换评估" % pi.get("fails"))
+            # 缺陷 2：lines 是主站路径（快照黑洞不可达→000），备站入口码只在 live
+            t.check_eq((pi.get("lines") or {}).get("www.default"), "000",
+                       "lines[www.default]=000（主站路径未恢复）")
+            t.check_eq((pi.get("lines") or {}).get("www.oversea"), "000",
+                       "lines[www.oversea]=000（主站路径未恢复）")
+            t.check_eq((pi.get("live") or {}).get("www.default"), "200",
+                       "live[www.default]=200（备站入口仍在服务）")
+            t.check_eq((pi.get("live") or {}).get("www.oversea"), "200",
+                       "live[www.oversea]=200（备站入口仍在服务）")
+        peer = run_board(srv.url, ["peer", "_dr-pi", "--target", "www"])
+        t.check_eq((peer.returncode, peer.stdout.strip()), (0, "unhealthy"),
+                   "peer --target www = unhealthy（主站未恢复 → 云侧恢复闸门拦住，防拉锯）")
     finally:
         srv.stop()
         shutil.rmtree(tmp, ignore_errors=True)
@@ -981,6 +1044,176 @@ def s12(t):
         t.check(bool(bare) and "无记录" in bare[0]["subject"] and "没有" in bare[0]["body"],
                 "补充：告警 subject/body 说明无记录风险")
     finally:
+        for key, value in env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        srv.stop()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ─────────────────────────── S13 备份语义不评估切换（缺陷 5） ───────────────────────────
+
+@scenario("S13", "缺陷 5：backup 语义不评估切换（无拒绝告警）；对照 primary 才切换")
+def s13(t):
+    srv = mock_alidns.start_mock()
+    tmp, cfg_path, state_dir = make_env()
+    env_backup = dict((k, os.environ.get(k)) for k in ("ALI_ENDPOINT", "ALI_KEY_ID", "ALI_KEY_SECRET"))
+    handler = None
+    log_collector = LogCollector()
+    orig_probe_net = dr_agent.probe_net
+    try:
+        os.environ["ALI_ENDPOINT"] = srv.url
+        os.environ["ALI_KEY_ID"] = "mock-ak"
+        os.environ["ALI_KEY_SECRET"] = "mock-secret"
+        cfg = dr_agent.load_config(cfg_path, explicit=True, state_dir=state_dir)
+        ctx = dr_agent.build_ctx(cfg)
+        alerts = AlertRecorder()
+        ctx.alerts = alerts
+        handler = _make_log_handler(log_collector)
+        dr_agent.LOG.addHandler(handler)
+        # 冻结自身网络对照（S7 同款）：本场景只验证切换评估路径，避免真实探测波动
+        dr_agent.probe_net = lambda c: {
+            "net": "ok", "detail": ["(S13 注入: 跳过真实自身网络对照)"],
+            "dns_ok": True, "neutral_codes": ["200"], "backup_code": "200", "backup_ok": True,
+        }
+
+        # ── 阶段 A：backup 语义 + 快照主站 IP 不可达（主站未恢复是预期状态） ──
+        srv.set_record("www", "A", "default", VERCEL_IP)
+        srv.set_record("www", "A", "oversea", VERCEL_IP)
+        srv.set_record("_dr-snap", "TXT", "default", json.dumps({
+            "v": 1, "ts": fresh_ts(-3600), "who": "pi", "dir": "backup",
+            "www": [BLACKHOLE], "www_oversea": [BLACKHOLE],
+        }, separators=(",", ":")))
+        before = zone_id_value_map(srv, "www", "A")
+        for _ in range(4):
+            ctx.state.data["last_full_probe_epoch"] = 0.0   # 每轮强制完整探测
+            dr_agent.run_tick(ctx)
+        fails = int(ctx.state.data.get("fails", 0))
+        t.check(fails >= 3, "阶段 A：连续 4 轮不健康使 fails=%d ≥ 阈值 3（旧实现将进入切换评估）" % fails)
+        t.check(not log_collector.contains("拒绝覆盖") and not log_collector.contains("幂等保护")
+                and not log_collector.contains("以下目标不切换"),
+                "阶段 A：无『拒绝覆盖/幂等保护/以下目标不切换』warning（不评估切换）")
+        t.check("switch_refused" not in alerts.kinds(),
+                "阶段 A：未发 switch_refused 告警（无意义噪音已消除）")
+        t.check_eq(zone_id_value_map(srv, "www", "A"), before, "阶段 A：www 记录未被改动（仍 Vercel）")
+        pi = board_json(srv, "_dr-pi")
+        t.check(pi is not None, "阶段 A：_dr-pi 心跳仍在写")
+        if pi:
+            t.check_eq(pi.get("verdict"), "unhealthy", "阶段 A：_dr-pi.verdict=unhealthy（主站未恢复）")
+            t.check_eq(pi.get("mode"), "backup", "阶段 A：_dr-pi.mode=backup")
+            t.check_eq((pi.get("lines") or {}).get("www.default"), "000",
+                       "阶段 A：lines[www.default]=000（主站路径不可达）")
+            t.check_eq((pi.get("live") or {}).get("www.default"), "200",
+                       "阶段 A：live[www.default]=200（备站入口可达，仅展示）")
+
+        # ── 阶段 B（对照）：primary 语义（黑洞注入）→ 同样的轮数会真的切换 ──
+        srv.set_record("www", "A", "default", BLACKHOLE)
+        srv.set_record("www", "A", "oversea", BLACKHOLE)
+        for _ in range(3):
+            ctx.state.data["last_full_probe_epoch"] = 0.0
+            dr_agent.run_tick(ctx)
+        t.check(log_collector.contains("满足切换条件") or log_collector.contains("✅ 切换完成"),
+                "阶段 B：primary 语义触发切换评估/执行（证明阶段 A 的静默不是路径失效）")
+        t.check_eq(zone_values(srv, "www", "A"), [VERCEL_IP, VERCEL_IP],
+                   "阶段 B：zone 已切到 Vercel（对照组成立）")
+    finally:
+        dr_agent.probe_net = orig_probe_net
+        if handler is not None:
+            dr_agent.LOG.removeHandler(handler)
+        for key, value in env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        srv.stop()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ─────────────────────────── S14 快照取 last_good_ips（缺陷 1） ───────────────────────────
+
+@scenario("S14", "缺陷 1：快照优先取 last_good_ips（黑洞切换不污染）；无则保留旧快照/不写数组", needs_net=False)
+def s14(t):
+    srv = mock_alidns.start_mock()
+    tmp, cfg_path, state_dir = make_env()
+    env_backup = dict((k, os.environ.get(k)) for k in ("ALI_ENDPOINT", "ALI_KEY_ID", "ALI_KEY_SECRET"))
+    handler = None
+    log_collector = LogCollector()
+    prev_level = dr_agent.LOG.level
+    try:
+        os.environ["ALI_ENDPOINT"] = srv.url
+        os.environ["ALI_KEY_ID"] = "mock-ak"
+        os.environ["ALI_KEY_SECRET"] = "mock-secret"
+        cfg = dr_agent.load_config(cfg_path, explicit=True, state_dir=state_dir)
+        ctx = dr_agent.build_ctx(cfg)
+        ctx.alerts = AlertRecorder()
+        dr_agent.LOG.setLevel(logging.INFO)   # 进程内测试不经 setup_logging，默认级别会滤掉 INFO
+        handler = _make_log_handler(log_collector)
+        dr_agent.LOG.addHandler(handler)
+        res = {"lines": {"www.default": "000"}, "live": {}, "main_lines": {},
+               "mode": "primary", "net": "ok", "targets": {}, "detail": []}
+
+        # ── A：预置 last_good_ips + 一份"已被污染"的旧快照 → 新快照必须用 last_good_ips ──
+        ctx.state.data["last_good_ips"] = {
+            "www.default": [CF_IP_A, CF_IP_B],
+            "www.oversea": [CF_IP_OVERSEA],
+        }
+        srv.set_record("_dr-snap", "TXT", "default", json.dumps({
+            "v": 1, "ts": fresh_ts(-7200), "who": "gh", "dir": "restore",
+            "www": [BLACKHOLE], "www_oversea": [BLACKHOLE],
+        }, separators=(",", ":")))
+        srv.set_record("www", "A", "default", BLACKHOLE)
+        srv.set_record("www", "A", "oversea", BLACKHOLE)
+        ok = dr_agent.execute_backup(ctx, res, ["www"])
+        t.check(ok is True, "A：execute_backup 返回 True（快照 best-effort 不阻断切换）")
+        t.check_eq(zone_values(srv, "www", "A"), [VERCEL_IP, VERCEL_IP], "A：www 已切到 Vercel")
+        snap = board_json(srv, "_dr-snap")
+        t.check(snap is not None, "A：_dr-snap 已写入")
+        if snap:
+            t.check_eq(sorted(snap.get("www") or []), sorted([CF_IP_A, CF_IP_B]),
+                       "A：快照 www = last_good_ips（最后一次健康主站 IP）")
+            t.check_eq(sorted(snap.get("www_oversea") or []), [CF_IP_OVERSEA],
+                       "A：快照 www_oversea = last_good_ips")
+            t.check(BLACKHOLE not in (snap.get("www") or []) and BLACKHOLE not in (snap.get("www_oversea") or []),
+                    "A：黑洞 IP 未进入快照（防污染，优先于旧快照数组）")
+            t.check(log_collector.contains("last_good_ips"), "A：日志说明数组来源是 last_good_ips")
+
+        # ── B：无 last_good_ips + 有效旧快照 → 保留旧数组（现行为不变） ──
+        ctx.state.data.pop("last_good_ips", None)
+        srv.set_record("www", "A", "default", BLACKHOLE)
+        srv.set_record("www", "A", "oversea", BLACKHOLE)
+        old_www = [CF_IP_A]
+        srv.set_record("_dr-snap", "TXT", "default", json.dumps({
+            "v": 1, "ts": fresh_ts(-7200), "who": "gh", "dir": "backup",
+            "www": old_www, "www_oversea": [CF_IP_OVERSEA],
+        }, separators=(",", ":")))
+        ok = dr_agent.execute_backup(ctx, res, ["www"])
+        t.check(ok is True, "B：execute_backup 返回 True")
+        snap = board_json(srv, "_dr-snap")
+        t.check(snap is not None and snap.get("www") == old_www,
+                "B：无 last_good_ips → 保留有效旧快照数组（现行为）")
+        t.check(log_collector.contains("保留其 IP 数组"), "B：日志出现『保留其 IP 数组』")
+
+        # ── C：无 last_good_ips + 无快照 → 只写 ts/who/dir，绝不写当前（黑洞）记录 ──
+        srv.delete_record("_dr-snap", "TXT", "default")
+        srv.set_record("www", "A", "default", BLACKHOLE)
+        srv.set_record("www", "A", "oversea", BLACKHOLE)
+        ok = dr_agent.execute_backup(ctx, res, ["www"])
+        t.check(ok is True, "C：execute_backup 返回 True（切换照常执行）")
+        t.check_eq(zone_values(srv, "www", "A"), [VERCEL_IP, VERCEL_IP], "C：www 已切到 Vercel")
+        snap = board_json(srv, "_dr-snap")
+        t.check(snap is not None, "C：_dr-snap 仍写入（ts/who/dir）")
+        if snap:
+            t.check(all(key not in snap for key in ("www", "www_oversea", "starkeeper")),
+                    "C：无任何 IP 数组（不把黑洞/当前记录当恢复目标）")
+            t.check_eq(snap.get("dir"), "backup", "C：dir=backup")
+            t.check_eq(snap.get("who"), "pi", "C：who=pi")
+        t.check(log_collector.contains("不写 IP 数组"), "C：日志明确警告不写 IP 数组")
+    finally:
+        dr_agent.LOG.setLevel(prev_level)
+        if handler is not None:
+            dr_agent.LOG.removeHandler(handler)
         for key, value in env_backup.items():
             if value is None:
                 os.environ.pop(key, None)

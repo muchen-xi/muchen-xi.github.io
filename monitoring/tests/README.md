@@ -24,7 +24,7 @@ python monitoring/tests/test_coop_scenarios.py S2 S12
 | 文件 | 说明 |
 |---|---|
 | `mock_alidns.py` | 假 Alidns 服务（内存 zone + 故障注入 + 调用统计），可内嵌可 CLI |
-| `test_coop_scenarios.py` | S0-S12 场景与断言（本文件是唯一入口） |
+| `test_coop_scenarios.py` | S0-S14 场景与断言（本文件是唯一入口） |
 | `test_starkeeper_safety.py` | 另一条独立回归：`monitoring/scripts/starkeeper_dns.py` 的"零记录空窗"防护（与本套无关，单独运行） |
 | `README.md` | 本文档 |
 
@@ -34,17 +34,19 @@ python monitoring/tests/test_coop_scenarios.py S2 S12
 |---|---|---|
 | **S0** mock 契约 | 假 API 本身是否可信 | 无匹配 `Record=[]`；缺 `Signature`→400 `MissingParameter`；`DomainRecords:null` 边界下 `dr_board mode www` 输出 `empty` 且 rc=0；重复 Add→`DomainRecordDuplicate`；超时注入客户端按自身 timeout 失败 |
 | **S1** 健康 | 主站在线时不误切 | `--ticks 3` 后：无 `_dr-snap`；`_dr-pi` verdict=healthy/net=ok/mode=primary/fails=0/lines=200；www 记录 RecordId+Value 全未动；`dr_board mode www`→`primary` |
-| **S2** 黑洞注入 | 连续 3 次不健康触发切换 | 注入 `203.0.113.1` 后 3 tick：日志有"满足切换条件/✅ 切换完成"；zone 两条线路都变 `76.76.21.21` 且总记录数仍为 2；`_dr-snap` 写入、`www`/`www_oversea` 数组 = 切换前黑洞 IP、dir=backup/who=pi；`mode www`→`backup` |
+| **S2** 黑洞注入 | 连续 3 次不健康触发切换 | 注入 `203.0.113.1` 后 3 tick：日志有"满足切换条件/✅ 切换完成"；zone 两条线路都变 `76.76.21.21` 且总记录数仍为 2；`_dr-snap` 写入且**不含 IP 数组**（无 last_good_ips 时只写 ts/who/dir，黑洞不能当恢复目标）、dir=backup/who=pi；`mode www`→`backup`；primary 语义 `_dr-pi` 无 `live` |
 | **S3** 拉锯防护（核心） | 云侧在对方摇头时不得恢复 | zone=Vercel、`_dr-pi` 是切换瞬间的 unhealthy/000 证据：`mode www`→`backup`、`peer _dr-pi --target www`→`unhealthy`；主站 IP 真实可达；契约 §四 的可执行复刻 `cloud_restore_allowed(backup, unhealthy)=False`（对照 healthy=True）；zone 仍是 Vercel |
-| **S4** 阶段一不恢复 | `DR_ROLE=switch_only` 只告警 | zone=Vercel + 快照主站 IP 可达 → `--ticks 16`（跨 3 次完整探测）：输出"恢复条件满足但 DR_ROLE=switch_only"、streak≥3；zone 与 `_dr-snap` 完全未动 |
+| **S4** 阶段一不恢复 | `DR_ROLE=switch_only` 只告警 | zone=Vercel + 快照主站 IP 可达 → `--ticks 16`（跨 3 次完整探测）：输出"恢复条件满足但 DR_ROLE=switch_only"、streak≥3；zone 与 `_dr-snap` 完全未动；backup 语义 `lines`=主站路径（快照 CF IP→200）、`live`=当前入口（Vercel→200），`peer --target www`=healthy（闸门可放行） |
 | **S5** Pi 失联降级 | 契约的"失联不阻断恢复" | `_dr-pi.ts` 40 分钟前 → `peer`=stale；删记录 → absent；`_dr-gh` 缺失 → absent；`cloud_restore_allowed` 对 stale/absent/unknown=True、对 unhealthy=False |
 | **S6** 快照防污染 | 已有有效快照时不得把黑洞 IP 当恢复目标 | 预置含 CF IP 数组的 `_dr-snap`，再触发切换：数组原样保留，仅 ts/who/dir 更新为当前/pi/backup |
 | **S7** 时钟防线 | 偏差超限拒绝 DNS 写 | skew=999（>300）：`allow_write()=False`；run_tick 后 www 记录与 RecordId 未动、无 `_dr-snap`；日志出现"时钟偏差…拒绝 DNS 写操作" |
-| **S8** 幂等 | 已是 backup 不重复覆盖 | zone=Vercel + 快照黑洞（制造 unhealthy）：日志"幂等保护"、无"切换完成"；www RecordId/Value 未动、无重复记录；`_dr-snap` 原文未变；`_dr-pi` 心跳照写 |
+| **S8** 备份语义静默 | backup 下不评估切换、不改任何记录 | zone=Vercel + 快照黑洞（制造 unhealthy）：无"拒绝覆盖/幂等保护/以下目标不切换"、无"切换完成"；www RecordId/Value 未动、无重复记录；`_dr-snap` 原文未变；`_dr-pi` 心跳照写（lines=主站 000、live=备站 200），`peer --target www`=unhealthy |
 | **S9** API 故障降级 | API 挂了不误切、云侧可回退 | `Describe` 注入 500：agent rc=0、verdict=unknown、zone 未动、无快照/心跳；`dr_board mode www` rc=1 且 stdout 为空、stderr 带 ❌ |
 | **S10** 验证档 | `DR_SWITCH_ENABLED=0` 零 DNS 风险 | 黑洞 + 3 tick：zone 仍黑洞且 RecordId/Value 未动、无 `_dr-snap`、日志"本应切换到备站…DR_SWITCH_ENABLED=0…仅告警"；`_dr-pi` 心跳 seq=3、ts 新鲜、verdict 照常。补充（进程内）：`DR_ROLE=full` + streak=3 直调 `maybe_restore` → 输出"本应恢复主站…DR_SWITCH_ENABLED=0"、发 `restore_disabled` 告警、zone 未动 |
 | **S11** 心跳降频 | `DR_BOARD_WRITE_SECONDS` 生效且不过期 | 阶段 A（interval=15，8 tick）：`_dr-pi` 仅写 2 次（<8），次数符合 elapsed/interval，ts age≈15s；阶段 B（interval=120）：首轮必写；中途黑洞化后 51s 内立即补写（<120，变化即写），最后一次 verdict=unhealthy |
 | **S12** starkeeper 安全 | 先建后删，任何失败不留裸域 | 断言1 非冲突 add 失败→A 原样、无 CNAME、有告警；断言2 删 A 失败→A+CNAME 并存（mixed）、CNAME 生效；断言3 成功→只剩 CNAME；断言4 恢复时 A 写回失败→CNAME 仍在。补充：冲突类错误才允许"删 A 后立即 add"，二次失败告警"无记录状态，需人工介入" |
+| **S13** 缺陷 5（进程内） | backup 语义不评估切换、无告警噪音 | zone=Vercel + 快照主站黑洞，4 轮后 fails=4≥3（旧实现会进入"幂等保护拒绝"路径）：无"拒绝覆盖/幂等保护/以下目标不切换"warning、`AlertRecorder` 无 `switch_refused`、www 记录未动、`_dr-pi` 照写（verdict=unhealthy/lines=000/live=200）。对照：同进程把 zone 变黑洞（primary）跑 3 轮 → 出现"满足切换条件"且 zone 切到 Vercel |
+| **S14** 缺陷 1（进程内） | 快照优先取 last_good_ips、绝不写当前记录 | A：预置 `last_good_ips` + 一份数组为黑洞的旧快照 → `execute_backup` 后快照数组 = last_good_ips（黑洞未进入，优先于旧快照）；B：无 last_good + 有效旧快照 → 旧数组原样保留；C：两者皆无 → 只写 ts/who/dir、无任何数组（切换照常执行） |
 
 ## mock_alidns.py
 
@@ -96,8 +98,8 @@ srv.clear_faults()
 1. 在 `test_coop_scenarios.py` 里写函数并加装饰器，注册顺序即运行顺序：
 
    ```python
-   @scenario("S13", "一句话标题")
-   def s13(t):
+   @scenario("S15", "一句话标题")
+   def s15(t):
        srv = mock_alidns.start_mock()
        tmp, cfg_path, state_dir = make_env(DR_ROLE="full")   # 关键字覆盖配置
        try:
@@ -135,8 +137,9 @@ srv.clear_faults()
 - **S12 的冲突退化路径是破坏性的**：`DomainRecordDuplicate` 时才允许"删 A 后立即 add"，
   若二次 add 也失败会告警"无记录状态，需人工介入"（这是按需求保留的降级路径）。
 - **S8 造 unhealthy 的手法**：zone=Vercel 本身健康，测试预置一份"主站 IP 不可达"的快照，
-  让 agent 在 backup 语义下判 unhealthy 从而走到 `maybe_switch` 的幂等保护分支；这是
-  用 mock 数据构造的输入，不影响被验证的拒绝逻辑。
+  让 agent 在 backup 语义下判 unhealthy（lines=主站路径 000、live=备站入口 200）；
+  验证的是"backup 语义不评估切换"（缺陷 5）与闸门 `peer --target www`=unhealthy
+  （缺陷 2），全是用 mock 数据构造的输入。
 - **S11 阶段 B 的"立即写"上界**：切换触发依赖下一次完整探测（slow 模式最长
   `DR_FULL_PROBE_SECONDS`=30s），所以"立即"指"判定变化的当轮 tick 立即写"，测试用
   `间隔 < DR_BOARD_WRITE_SECONDS` 证明不是等心跳间隔到点。

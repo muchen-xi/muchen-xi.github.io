@@ -11,9 +11,17 @@
     TCP 轻探连续失败或完整探测判不健康 → 升入 fast 模式，每 tick 完整探测。
   - 完整探测：权威 A 记录（阿里云 API）→ curl --resolve 直连 + 递归 DNS 对照
     + 自身网络对照探针（223.5.5.5 / 两个中立站点 / vercel-test 备站验证域）。
-  - 切换（阶段一默认只切不恢复）：连续 3 次完整探测不健康 + 权威推导 primary
+  - 切换（阶段一默认只切不恢复）：**仅 primary 语义**下评估——连续 3 次完整探测不健康
     + 自身网络正常 → 按契约切 www（default/oversea → Vercel IP）与 starkeeper
     （default → CNAME starkeeper-bpw.pages.dev），切换前 best-effort 写 _dr-snap。
+    backup/mixed/empty 语义下不评估切换（主站不健康是切换后的预期状态，旧实现在这里
+    每轮发"幂等保护拒绝"的无意义告警——2026-09-12 演练缺陷 5）。
+  - 判定语义：`lines` 恒表示"主站路径"探测码（primary=权威记录直连；backup/mixed=
+    `_dr-snap` 主站 IP 直连），当前入口（备站/CNAME）探测码只进可选 `live`（仅展示，
+    不参与 peer 闸门）——否则闸门会把备站 200 当"主站已恢复"放行，形成拉锯（缺陷 2）。
+  - 快照防污染：`state.last_good_ips` 记录"最后一次权威查询成功且线路探测健康时的
+    主站 IP"，切换写 `_dr-snap` 优先用它；无则保留有效旧快照数组；两者皆无只写
+    ts/who/dir，绝不把当前（可能被攻击的）记录当恢复目标（缺陷 1）。
   - 会签板：每轮写 _dr-pi（含 temp/up），读 _dr-snap 与 _dr-gh（peer 判定）。
   - 时钟防线：Pi Zero W 无 RTC，用 HTTP Date 头校时，偏差超限拒绝一切 DNS 写。
   - SMTP 告警 + 每日 08:00 心跳邮件；同类告警 30 分钟节流。
@@ -638,7 +646,8 @@ class State(object):
         "seq", "mode_state", "tcp_fails", "fails", "streak",
         "last_probe", "last_full_probe_epoch", "last_switch_ts", "last_switch_epoch",
         "last_switch_dir", "last_verdict", "last_net", "last_mode", "last_lines",
-        "last_main_lines", "last_detail", "last_peer", "tcp_cache", "target_modes",
+        "last_live", "last_main_lines", "last_detail", "last_peer", "tcp_cache",
+        "target_modes", "last_good_ips",
         "clock_skew", "clock_checked_at", "alerts", "last_heartbeat",
         "board_sig", "last_board_write_epoch",
     )
@@ -660,7 +669,9 @@ class State(object):
             "last_net": "ok",
             "last_mode": "empty",
             "last_lines": {},
+            "last_live": {},
             "last_main_lines": {},
+            "last_good_ips": {},
             "last_detail": [],
             "last_peer": "",
             "tcp_cache": {},
@@ -984,7 +995,12 @@ def trim_snap_value(payload):
 
 
 def build_pi_payload(ctx):
-    """构造 _dr-pi 单行紧凑 JSON（契约 2.1，字段名不可改，≤255 字节）。"""
+    """构造 _dr-pi 单行紧凑 JSON（契约 2.1，字段名不可改，≤255 字节）。
+
+    `live` 仅展示用（backup/mixed 语义的当前入口码），裁剪顺序优先牺牲可选项：
+    temp → up → live.starkeeper 键 → 整个 live → 截断 lines 值。lines（主站路径）
+    与判定字段绝不为展示字段让路。
+    """
     state = ctx.state.data
     payload = {
         "v": 1,
@@ -996,7 +1012,7 @@ def build_pi_payload(ctx):
         "mode": state.get("last_mode", "empty"),
         "fast": 1 if state.get("mode_state") == "fast" else 0,
         "fails": int(state.get("fails", 0)),
-        "lines": state.get("last_lines") or {},
+        "lines": dict(state.get("last_lines") or {}),
     }
     temp = read_temp()
     if temp is not None:
@@ -1004,21 +1020,34 @@ def build_pi_payload(ctx):
     up = int(time.monotonic() - ctx.start_mono)
     if up > 0:
         payload["up"] = up
+    live = state.get("last_live") or {}
+    if live:
+        # 复制一份：裁剪时不得改动 state 里的对象
+        payload["live"] = dict(live)
 
     def dump(p):
         return json.dumps(p, separators=(",", ":"), ensure_ascii=False)
 
-    text = dump(payload)
-    if len(text.encode("utf-8")) <= MAX_TXT_BYTES:
-        return text
+    def size(p):
+        return len(dump(p).encode("utf-8"))
+
+    if size(payload) <= MAX_TXT_BYTES:
+        return dump(payload)
     payload.pop("temp", None)
-    text = dump(payload)
-    if len(text.encode("utf-8")) <= MAX_TXT_BYTES:
-        return text
+    if size(payload) <= MAX_TXT_BYTES:
+        return dump(payload)
     payload.pop("up", None)
-    text = dump(payload)
-    if len(text.encode("utf-8")) <= MAX_TXT_BYTES:
-        return text
+    if size(payload) <= MAX_TXT_BYTES:
+        return dump(payload)
+    if isinstance(payload.get("live"), dict) and payload["live"]:
+        payload["live"].pop("starkeeper", None)   # 与快照裁剪顺序一致：starkeeper 最低优先
+        if not payload["live"]:
+            payload.pop("live", None)
+        if size(payload) <= MAX_TXT_BYTES:
+            return dump(payload)
+        payload.pop("live", None)
+        if size(payload) <= MAX_TXT_BYTES:
+            return dump(payload)
     payload["lines"] = dict((k, str(v)[:3]) for k, v in (payload.get("lines") or {}).items())
     text = dump(payload)
     LOG.warning("⚠ _dr-pi 内容超长（%d 字节），已裁剪", len(text.encode("utf-8")))
@@ -1185,6 +1214,21 @@ def _probe_ip_list(ips, host, label):
     return "000", codes
 
 
+def remember_last_good_ips(ctx, key, ips):
+    """记下"最后一次健康时的主站 IP"（state.last_good_ips，切换写快照的首选来源）。
+
+    只在权威查询成功且该线路探测健康时调用（调用点已保证）。**只记主站 IP**：
+    备站 IP 集（VERCEL_IPS/GH_PAGES_IPS）与主站无关，记进去会让恢复目标变成备站
+    （反向污染）；同线路内混入备站 IP 时整组不记（宁可保留更早的健康集合）。
+    """
+    if not ips:
+        return
+    for ip in ips:
+        if str(ip) in BACKUP_SET:
+            return
+    ctx.state.data.setdefault("last_good_ips", {})[key] = [str(ip) for ip in ips]
+
+
 def probe_targets(ctx, res):
     """按 DR_TARGETS 做权威推导 + 直连探测；写 res["lines"] / res["targets"]。"""
     cfg = ctx.cfg
@@ -1214,6 +1258,7 @@ def probe_targets(ctx, res):
                 res["lines"][key] = code
                 if ok_code(code):
                     ctx.state.data.setdefault("tcp_cache", {})[key] = ips[0]
+                    remember_last_good_ips(ctx, key, ips)
         else:
             mode = derive_starkeeper_mode(ali)
             if mode is None:
@@ -1235,6 +1280,7 @@ def probe_targets(ctx, res):
                 res["lines"]["starkeeper"] = code
                 if ok_code(code):
                     ctx.state.data.setdefault("tcp_cache", {})["starkeeper"] = a_ips[0]
+                    remember_last_good_ips(ctx, "starkeeper", a_ips)
             else:
                 # backup（CNAME）形态：走普通递归解析探测官方入口
                 code = probe_http("https://%s/" % HOST_STAR, timeout=8)
@@ -1244,9 +1290,10 @@ def probe_targets(ctx, res):
 
 
 def probe_main_station(ctx, res):
-    """backup 语义下额外探测快照里的主站 IP（恢复判定依据，与 GH workflow 一致）。
+    """backup/mixed 语义下额外探测快照里的主站 IP（恢复判定依据，与 GH workflow 一致）。
 
-    结果写 res["main_lines"]（本地状态展示用，不进会签板 lines）。
+    结果写 res["main_lines"]；随后 apply_lines_semantics() 会把它换成 res["lines"]
+    （契约 2.1：backup/mixed 下 lines 也必须是主站路径），当前入口码挪去 live。
     """
     if ctx.ali is None:
         return
@@ -1264,6 +1311,32 @@ def probe_main_station(ctx, res):
             continue
         code, _codes = _probe_ip_list(ips[:3], host, "主站 " + key)
         res["main_lines"][key] = code
+
+
+def apply_lines_semantics(res, targets):
+    """契约 2.1：`lines` 在两种语义下都表示**主站路径**。
+
+    - primary：lines 即权威记录直连探测码（现行为不变）；
+    - backup/mixed：lines 换成 `_dr-snap` 主站 IP 的直连探测码（恢复判定路径），
+      当前入口（备站 Vercel / CNAME）的探测码移入可选 `live`（仅展示，不参与闸门）。
+    快照无对应主站 IP 时该 key 从 lines 省略（宁缺毋滥）——绝不让备站入口码冒充
+    主站路径，否则 `peer --target` 会把备站 200 当成"主站已恢复"放行恢复（拉锯）。
+    """
+    live = {}
+    for target in targets:
+        mode = (res["targets"].get(target) or {}).get("mode")
+        if mode not in ("backup", "mixed"):
+            continue
+        keys = ("www.default", "www.oversea") if target == "www" else ("starkeeper",)
+        for key in keys:
+            entry_code = res["lines"].pop(key, None)
+            if entry_code is not None:
+                live[key] = entry_code
+            main_code = res["main_lines"].get(key)
+            if main_code is not None:
+                res["lines"][key] = main_code
+    if live:
+        res["live"] = live
 
 
 def probe_recursive(ctx, res):
@@ -1307,6 +1380,7 @@ def probe_full(ctx):
     res = {
         "ts": utc_now_str(),
         "lines": {},
+        "live": {},
         "main_lines": {},
         "targets": {},
         "mode": state.get("last_mode", "empty"),
@@ -1344,9 +1418,11 @@ def probe_full(ctx):
     if "www" in cfg["targets"]:
         probe_recursive(ctx, res)
 
-    # backup 目标：探测快照中的主站 IP（恢复判定）
-    if any((res["targets"].get(t) or {}).get("mode") == "backup" for t in cfg["targets"]):
+    # backup/mixed 目标：探测快照中的主站 IP（恢复判定，也是 lines 的主站路径来源）
+    if any((res["targets"].get(t) or {}).get("mode") in ("backup", "mixed") for t in cfg["targets"]):
         probe_main_station(ctx, res)
+    # 契约 2.1：backup/mixed 下 lines 换成主站路径码，当前入口码挪去 live（仅展示）
+    apply_lines_semantics(res, cfg["targets"])
 
     # ── 统一判定 ──
     bad_serving = [k for k, v in res["lines"].items() if not ok_code(v)]
@@ -1358,7 +1434,13 @@ def probe_full(ctx):
         res["detail"].append("自身网络异常 → verdict=unknown，绝不切换")
     elif not res["lines"]:
         res["verdict"] = "unknown"
-        res["detail"].append("无凭据（降级视角）" if ctx.ali is None else "权威解析失败（API 异常）")
+        backup_semantics = [t for t in cfg["targets"]
+                            if (res["targets"].get(t) or {}).get("mode") in ("backup", "mixed")]
+        if backup_semantics:
+            res["detail"].append("备站语义（%s）但快照无主站 IP：主站路径未知 → unknown"
+                                 % ",".join(backup_semantics))
+        else:
+            res["detail"].append("无凭据（降级视角）" if ctx.ali is None else "权威解析失败（API 异常）")
     elif not fresh_modes:
         res["verdict"] = "unknown"
         res["detail"].append("无凭据：降级视角不作为切换依据" if ctx.ali is None
@@ -1574,32 +1656,47 @@ def verify_ips(ips, host):
 
 
 def collect_snapshot_arrays(ctx):
-    """切换前采集主站原始 IP（快照回退值）。读失败降级为空 dict。"""
+    """切换前采集主站原始 IP（快照回退值）。
+
+    只信任 state["last_good_ips"]（最后一次"权威查询成功且线路探测健康"时记下的
+    主站 IP）。**绝不读当前权威记录**：首次切换时当前记录可能正是攻击注入的黑洞 IP
+    （2026-09-12 演练缺陷 1），写进快照会让恢复方回退到黑洞。没有 last_good_ips
+    时返回 {}，由 write_snap 决定保留旧快照数组或不写数组。
+    """
     arrays = {}
+    last_good = ctx.state.data.get("last_good_ips")
+    if not isinstance(last_good, dict):
+        return arrays
+    mapping = []
     if "www" in ctx.cfg["targets"]:
-        default_ips = authoritative_www_ips(ctx.ali, "default")
-        oversea_ips = authoritative_www_ips(ctx.ali, "oversea")
-        if default_ips:
-            arrays["www"] = default_ips
-        if oversea_ips:
-            arrays["www_oversea"] = oversea_ips
+        mapping += [("www", "www.default"), ("www_oversea", "www.oversea")]
     if "starkeeper" in ctx.cfg["targets"]:
-        try:
-            star_ips = [r["value"] for r in ctx.ali.records("starkeeper", "A", "default") if r["value"]]
-            if star_ips:
-                arrays["starkeeper"] = star_ips
-        except Exception as e:
-            LOG.warning("⚠ 采集 starkeeper 快照失败: %s", e)
+        mapping.append(("starkeeper", "starkeeper"))
+    for snap_key, state_key in mapping:
+        ips = last_good.get(state_key)
+        if isinstance(ips, list) and ips:
+            arrays[snap_key] = [str(x) for x in ips]
     return arrays
 
 
 def write_snap(ctx, direction, fallback_arrays):
-    """写 _dr-snap（best-effort，绝不阻断切换；契约 2.2 的保留语义在此实现）。"""
+    """写 _dr-snap（best-effort，绝不阻断切换；契约 2.2 的保留语义在此实现）。
+
+    数组来源优先级（2026-09-12 修复演练缺陷 1）：
+      1. last_good_ips（collect_snapshot_arrays 的返回值）——最后一次健康时的主站 IP；
+      2. 已存在且有效的旧快照数组（原行为，防止覆盖）；
+      3. 两者皆无 → 只写 ts/who/dir，不写任何 IP 数组（宁可恢复方无目标可猜，
+         也绝不把当前可能被攻击的记录当恢复目标）。
+    """
     if ctx.cfg["dry_run"]:
         LOG.info("⚠ [DRY RUN] 将写快照 dir=%s 回退数组=%s", direction, json.dumps(fallback_arrays, ensure_ascii=False))
         return False
     old = read_snap(ctx.ali)
-    if snap_has_ips(old):
+    if fallback_arrays:
+        arrays = dict(fallback_arrays)
+        LOG.info("💾 快照使用 last_good_ips（最后一次健康时的主站 IP）: %s",
+                 json.dumps(arrays, ensure_ascii=False))
+    elif snap_has_ips(old):
         # 已存在有效快照 → 保留其 IP 数组（防把被攻击/黑洞的当前记录当恢复目标）
         arrays = {}
         for key in ("www", "www_oversea", "starkeeper"):
@@ -1608,7 +1705,8 @@ def write_snap(ctx, direction, fallback_arrays):
                 arrays[key] = [str(x) for x in val]
         LOG.info("💾 已存在有效快照 — 保留其 IP 数组（只更新 ts/who/dir）")
     else:
-        arrays = fallback_arrays
+        arrays = {}
+        LOG.warning("⚠ 无 last_good_ips 且无有效旧快照 — 只写 ts/who/dir，不写 IP 数组（绝不把当前记录当恢复目标）")
     payload = {"v": 1, "ts": utc_now_str(), "who": "pi", "dir": direction}
     payload.update(arrays)
     value = trim_snap_value(payload)
@@ -1876,9 +1974,17 @@ def maybe_restore(ctx, res):
 
 
 def maybe_switch(ctx, res):
-    """切换判定：连续不健康 + 推导 primary + 自身网络正常；幂等保护 backup/mixed/empty。"""
+    """切换判定：**仅 primary 语义**评估——连续不健康 + 自身网络正常。
+
+    backup/mixed/empty 语义下直接返回：主站不健康正是切换后的预期状态，旧实现仍每轮
+    评估、把"幂等保护拒绝"当异常发告警（2026-09-12 演练缺陷 5）。此路径不消耗/改动
+    任何状态（fails/streak 保留给展示与恢复判定）。
+    仍保留执行层的幂等保护：primary 聚合态下个别目标推导为 backup/unknown 时拒绝覆盖。
+    """
     cfg = ctx.cfg
     state = ctx.state.data
+    if res.get("mode") != "primary":
+        return
     if int(state.get("fails", 0)) < cfg["fails_to_switch"]:
         return
     now = time.time()
@@ -1948,7 +2054,8 @@ def heartbeat_check(ctx):
         "树莓派观察者心跳（每日 08:00）。\n\n"
         "时间: %s (UTC) / 本地 %s\n"
         "判定: %s（net=%s, mode=%s, fast=%d, fails=%d, streak=%d）\n"
-        "线路: %s\n"
+        "线路(主站路径): %s\n"
+        "当前入口(备站/CNAME): %s\n"
         "温度: %s\n"
         "磁盘(状态目录): %s\n"
         "进程 uptime: %ds / 系统 uptime: %s\n"
@@ -1961,6 +2068,7 @@ def heartbeat_check(ctx):
         1 if state.get("mode_state") == "fast" else 0,
         int(state.get("fails", 0)), int(state.get("streak", 0)),
         ", ".join("%s=%s" % (k, v) for k, v in sorted((state.get("last_lines") or {}).items())) or "无",
+        ", ".join("%s=%s" % (k, v) for k, v in sorted((state.get("last_live") or {}).items())) or "无（primary 语义）",
         ("%.1f ℃" % temp) if temp is not None else "获取不到（非树莓派或权限不足）",
         ("%.1f%%" % disk) if disk is not None else "获取不到",
         up, ("%ds" % sys_up) if sys_up is not None else "获取不到",
@@ -2042,12 +2150,23 @@ def run_tick(ctx):
         state["last_verdict"] = res["verdict"]
         state["last_net"] = res["net"]
         state["last_lines"] = res["lines"]
+        state["last_live"] = res.get("live") or {}
         state["last_main_lines"] = res["main_lines"]
         state["last_detail"] = (res["detail"] or [])[:6]
         state["last_peer"] = res.get("peer") or ""
         for target, info in (res["targets"] or {}).items():
             if info.get("fresh"):
                 state.setdefault("target_modes", {})[target] = info["mode"]
+        # 2026-09-12 演练修复（Pi 侧，与云侧 mode_changed 归零对称）：
+        # 权威状态迁移时计数必须归零。否则 backup 期累积的 fails 会在恢复回 primary 的
+        # 第一轮就满足切换阈值——变成"1 次探测即切换"而不是"连续 3 次"，往复即摆动。
+        prev_mode = state.get("last_mode")
+        if prev_mode != res["mode"]:
+            if state.get("fails") or state.get("streak"):
+                LOG.warning("⚠ 权威状态迁移 %s → %s：fails/streak 归零（迁移前 fails=%s streak=%s）",
+                            prev_mode, res["mode"], state.get("fails"), state.get("streak"))
+            state["fails"] = 0
+            state["streak"] = 0
         state["last_mode"] = res["mode"]
 
         if res["verdict"] == "healthy":
@@ -2252,9 +2371,12 @@ def cmd_status(cfg):
     print("  计数: fails=%d streak=%d tcp_fails=%d seq=%d"
           % (int(d.get("fails", 0)), int(d.get("streak", 0)),
              int(d.get("tcp_fails", 0)), int(d.get("seq", 0))))
-    print("  线路(当前服务路径): %s"
+    print("  线路(主站路径): %s"
           % (", ".join("%s=%s" % (k, v) for k, v in sorted((d.get("last_lines") or {}).items())) or "无"))
-    if d.get("last_main_lines"):
+    if d.get("last_live"):
+        print("  当前入口(备站/CNAME): %s"
+              % ", ".join("%s=%s" % (k, v) for k, v in sorted((d.get("last_live") or {}).items())))
+    if d.get("last_main_lines") and d.get("last_main_lines") != d.get("last_lines"):
         print("  主站直连(快照 IP): %s"
               % ", ".join("%s=%s" % (k, v) for k, v in sorted((d.get("last_main_lines") or {}).items())))
     print("  最近完整探测: %s" % (d.get("last_probe") or "从未"))

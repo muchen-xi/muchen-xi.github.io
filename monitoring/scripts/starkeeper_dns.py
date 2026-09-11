@@ -22,6 +22,11 @@
   禁止"删光再建"——中途失败会留下**零记录**的 default 线路，国内解析直接失败且无法自愈
   （与 2026-06-27 P0 自伤事故同一失败模式）。backup 优先直接补建 CNAME（可能零空窗），
   被拒（同名冲突）才退回"先删 A 后立即补建"，并在补建失败时回滚写回原 A 记录。
+
+restore 顺序 (2026-09-12 演练缺陷 #3 修复): CNAME 存在时写 A 会被阿里云拒绝
+  (DomainRecordConflict)——旧实现"先 rotate 写 A 再删 CNAME"必然失败，starkeeper 卡在
+  备站无法恢复。现顺序: 候选池只读探测 → 删 default CNAME（oversea CNAME 固定不动）→
+  立即 converge A → 写 A 失败则把 CNAME 加回，绝不留裸域。
 """
 
 import base64
@@ -153,6 +158,22 @@ def converge_a_records(target_ips: list) -> bool:
     return True
 
 
+def select_candidates() -> list:
+    """探测候选池可达性，返回延迟升序的前 KEEP_N 个可达 IP。**只读，不写任何记录。**
+
+    注意：旧实现 `[(ip, lat) for ip, lat in (probe(ip) for ip in CANDIDATES) if ip]`
+    会把 probe 返回的 (ok, latency) 解包后把 **布尔值**当成 IP 保留（`ip` 被解包遮蔽），
+    rotate/restore 会把 "True" 写进 A 记录。这里显式保留原 IP。
+    """
+    ok_ips = []
+    for ip in CANDIDATES:
+        ok, lat = probe(ip)
+        if ok:
+            ok_ips.append((ip, lat))
+    ok_ips.sort(key=lambda x: x[1])
+    return [ip for ip, _ in ok_ips[:KEEP_N]]
+
+
 def cmd_status() -> int:
     for r in list_records():
         print(f"  {r['line']:8s} {r['type']:6s} -> {r['value']}")
@@ -190,9 +211,7 @@ def cmd_check() -> int:
 
 def cmd_rotate() -> int:
     """候选池测可达性，default A 记录更新为可达 IP 集合。仅在 primary 语义下调用。"""
-    ok_ips = [(ip, lat) for ip, lat in (probe(ip) for ip in CANDIDATES) if ip]
-    ok_ips.sort(key=lambda x: x[1])
-    keep = [ip for ip, _ in ok_ips[:KEEP_N]]
+    keep = select_candidates()
     if not keep:
         print("  !! 候选池全部不可达，保持现状")
         return 1
@@ -255,14 +274,47 @@ def cmd_backup() -> int:
 
 
 def cmd_restore() -> int:
-    """恢复: default CNAME → A 记录 (候选池 IP)。restore 前先 rotate 验证可达性。"""
-    ok = cmd_rotate()
-    if ok != 0:
+    """恢复: default CNAME → A 记录 (候选池 IP)。
+
+    顺序（2026-09-12 演练缺陷 #3）：CNAME 存在时写 A 会被阿里云拒绝（DomainRecordConflict），
+    旧实现"先 rotate 写 A 后删 CNAME"必然失败。现为安全顺序：
+      1. 候选池只读探测（probe，不写任何记录）；全不可达 → 不动记录返回 1
+      2. 删 default 线路 CNAME —— **只删 default；oversea 线路 CNAME 是固定配置，绝不触碰**
+      3. 删完立即 converge A 记录（先建后删）
+      4. 写 A 失败 → 回滚把 CNAME 加回（PAGES_HOST），绝不留下零记录裸域
+    """
+    keep = select_candidates()
+    if not keep:
+        print("  !! 候选池全部不可达，保持现状（未改动任何记录）", file=sys.stderr)
         return 1
+
     for r in list_records():
         if r["type"] == "CNAME" and r["line"] == "default":
             delete_record(r["id"])
-    print("  restore: default -> A (优选 IP)")
+
+    try:
+        changed = converge_a_records(keep)
+    except Exception as e:
+        print(f"  !! 写回 A 记录失败: {e} — 尝试回滚 default CNAME", file=sys.stderr)
+        try:
+            add_record("CNAME", PAGES_HOST, "default")
+            print("  · 已回滚: default -> CNAME，保持 backup", file=sys.stderr)
+        except Exception as e2:
+            try:
+                remaining = [r for r in list_records() if r["line"] == "default"]
+            except Exception:
+                remaining = None
+            if remaining:
+                print(f"  ⚠ CNAME 回滚未成功（{e2}），但 default 线路仍有 {len(remaining)} 条记录，非裸域",
+                      file=sys.stderr)
+            else:
+                print(f"  !! CNAME 回滚失败: {e2} — default 线路可能无记录，需人工介入！", file=sys.stderr)
+        return 1
+
+    if changed:
+        print("  restore: default CNAME -> A", ", ".join(keep))
+    else:
+        print("  restore: default -> A (记录已一致，无变更)")
     return 0
 
 

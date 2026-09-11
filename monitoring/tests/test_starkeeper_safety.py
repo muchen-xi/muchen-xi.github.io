@@ -10,6 +10,12 @@
     **default 线路的记录数，在任何时刻都不能变成 0**（backup 的冲突回退路径除外，
     该路径天生存在一次调用的空窗，故要求失败时必须回滚）。
 
+2026-09-12 黑洞演练缺陷 #3 补充：`cmd_restore` 旧顺序"先写 A 后删 CNAME"在 CNAME 存在时
+必然撞 `DomainRecordConflict`（假 API 已按真实行为拒绝"default 有 CNAME 时写 A"）。
+restore 的正确顺序"删 default CNAME → 立即写 A"天生存在一次调用空窗（CNAME/A 互斥决定），
+因此其不变量为：**写 A 失败必须回滚 CNAME，结束状态绝不为零记录**，且 **oversea 线路
+CNAME 是固定配置，任何路径都不得触碰**。
+
 跑法： python monitoring/tests/test_starkeeper_safety.py
 """
 import io
@@ -26,6 +32,8 @@ next_id = [1]
 history = []              # 操作序列
 min_default = [999]       # 全程 default 线路最少记录数
 reject_cname_adds = [0]   # 前 N 次 CNAME 补建被拒（模拟同名冲突）
+fail_a_after = [None]     # 允许成功 N 次写 A 之后全部失败（模拟 converge 中途写失败）
+a_add_ok = [0]            # 已成功的写 A 次数
 
 
 def default_a():
@@ -51,6 +59,14 @@ def fake_call(action, **kw):
             {"RecordId": i, "RR": "starkeeper", "Type": r["type"],
              "Value": r["value"], "Line": r["line"]} for i, r in zone.items()]}}
     if action == "AddDomainRecord":
+        if kw["Type"] == "A" and kw["Line"] == "default" and any(
+                r["type"] == "CNAME" and r["line"] == "default" for r in zone.values()):
+            # 真实阿里云行为：default 线路存在 CNAME 时写 A 必被拒（演练缺陷 #3 的根因）
+            raise Exception("DomainRecordConflict: default 线路已有 CNAME")
+        if kw["Type"] == "A" and fail_a_after[0] is not None:
+            if a_add_ok[0] >= fail_a_after[0]:
+                raise Exception("injected: 写 A 记录失败")
+            a_add_ok[0] += 1
         if kw["Type"] == "CNAME" and reject_cname_adds[0] > 0:
             reject_cname_adds[0] -= 1
             raise Exception("DomainRecordConflict: CNAME 与现有 A 记录冲突")
@@ -81,16 +97,28 @@ def case(name, ok, detail=""):
     print(("✅ " if ok else "❌ ") + name + ("  " + detail if detail else ""))
 
 
-def reset(records=(), reject_cname=0):
+def reset(records=(), reject_cname=0, fail_a_after_n=None):
     zone.clear()
     next_id[0] = 1
     history.clear()
     reject_cname_adds[0] = reject_cname
+    fail_a_after[0] = fail_a_after_n
+    a_add_ok[0] = 0
     for t, v, line in records:
         zone[next_id[0]] = {"type": t, "value": v, "line": line}
         next_id[0] += 1
     min_default[0] = 999
     check_invariant()
+
+
+def make_probe(reachable):
+    """构造只读探测桩：reachable 集合内返回可达，其余不可达。"""
+    reach = set(reachable)
+
+    def _probe(ip):
+        return (ip in reach, 0.1 if ip in reach else 99.0)
+
+    return _probe
 
 
 def main():
@@ -143,6 +171,58 @@ def main():
     rc = sk.cmd_backup()
     sys.stderr = old_err
     case("回滚失败：返回 1 且提示人工介入", rc == 1 and "人工介入" in buf.getvalue())
+    sk.call = fake_call  # 恢复假 API（dead_call 只服务上一场景）
+
+    # ── 7. restore 正常：只读探测 → 删 default CNAME → 立即写 A ────
+    # 假 API 已强制"CNAME 存在时写 A 被拒"，旧实现（先写 A 后删 CNAME）在此必然失败
+    sk.probe = make_probe(sk.CANDIDATES)
+    reset([("CNAME", sk.PAGES_HOST, "default"), ("CNAME", sk.PAGES_HOST, "oversea")])
+    oversea_id = [i for i, r in zone.items() if r["line"] == "oversea"][0]
+    oversea_before = dict(zone[oversea_id])
+    rc = sk.cmd_restore()
+    want = sorted(sk.CANDIDATES[:sk.KEEP_N])
+    case("restore 正常：返回 0 + default A 就位", rc == 0 and default_a() == want, str(default_a()))
+    case("restore 正常：default CNAME 已清理", not has_cname())
+    case("restore 正常：oversea CNAME 原样未被触碰", zone.get(oversea_id) == oversea_before,
+         str(zone.get(oversea_id)))
+    dels = [i for i, h in enumerate(history) if h[0] == "delete"]
+    writes = [i for i, h in enumerate(history) if h[0] in ("add", "update")]
+    case("restore 顺序：先删 CNAME 后写 A", bool(dels and writes) and max(dels) < min(writes),
+         str(history))
+
+    # ── 8. restore 候选全不可达：一条记录都不动 ─────────────────────
+    sk.probe = make_probe([])
+    reset([("CNAME", sk.PAGES_HOST, "default"), ("CNAME", sk.PAGES_HOST, "oversea")])
+    snapshot = {i: dict(r) for i, r in zone.items()}
+    buf, old_err = io.StringIO(), sys.stderr
+    sys.stderr = buf
+    rc = sk.cmd_restore()
+    sys.stderr = old_err
+    case("restore 全不可达：返回 1", rc == 1)
+    case("restore 全不可达：记录零改动", zone == snapshot and history == [], str(history))
+
+    # ── 9. restore 写 A 失败：回滚 CNAME，不留裸域 ──────────────────
+    sk.probe = make_probe(sk.CANDIDATES)
+    reset([("CNAME", sk.PAGES_HOST, "default")], fail_a_after_n=0)
+    buf, old_err = io.StringIO(), sys.stderr
+    sys.stderr = buf
+    rc = sk.cmd_restore()
+    sys.stderr = old_err
+    case("restore 写A失败：返回 1", rc == 1)
+    case("restore 写A失败：CNAME 已回滚", has_cname() and default_a() == [],
+         f"cname={has_cname()} A={default_a()}")
+    case("restore 写A失败：default 线路非空", default_count() >= 1)
+
+    # ── 10. restore 部分写 A 后失败且 CNAME 回滚被拒：线路仍非空 ─────
+    reset([("CNAME", sk.PAGES_HOST, "default")], reject_cname=1, fail_a_after_n=1)
+    buf, old_err = io.StringIO(), sys.stderr
+    sys.stderr = buf
+    rc = sk.cmd_restore()
+    sys.stderr = old_err
+    case("restore 部分写A失败：返回 1", rc == 1)
+    case("restore 部分写A失败：线路非空（部分 A 在位）+ 明确告警",
+         default_count() >= 1 and not has_cname() and "非裸域" in buf.getvalue(),
+         f"default={default_count()} stderr={buf.getvalue().strip()[:80]}")
 
     print()
     print(f"结果：{sum(results)}/{len(results)} 通过")

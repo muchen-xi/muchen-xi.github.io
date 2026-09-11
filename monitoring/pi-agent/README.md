@@ -90,18 +90,28 @@ sudo -E ALI_KEY_ID=xxx ALI_KEY_SECRET=yyy \
 3. **递归解析对照**：显式用 `223.5.5.5` 解析 `www.chenxiuniverse.top` 与权威记录比对。
    不一致 = 劫持/污染信号 → 告警；不一致**且递归结果不可达**（真实用户路径故障）→ 计入不健康。
    *仅在权威推导为 `primary` 时比对*，避免切换后 TTL 内的假告警。
-4. **backup 语义**：若目标是 `backup`，额外用 `_dr-snap` 里的主站 IP 直连探测（恢复依据，
-   与 failover-monitor workflow 行为一致）；主站仍不可达时不累积健康计数。
+4. **backup/mixed 语义**：若目标推导为 `backup`/`mixed`，额外用 `_dr-snap` 里的主站 IP
+   直连探测（恢复依据，与 failover-monitor workflow 行为一致），并把结果写进 `lines`
+   （契约 2.1：`lines` 恒为主站路径；当前入口码移入 `live`）；主站仍不可达时不累积
+   健康计数。
 
 健康判据与仓库一致：**HTTP 2xx/3xx/4xx = 健康；`000` 或 5xx = 不健康**。
 `verdict=unknown`（自身网络异常 / API 异常 / 无凭据）时**冻结计数**，不切换。
+
+## 三种权威语义下的行为边界
+
+| 权威 mode | agent 做什么 | agent 不做什么 |
+|---|---|---|
+| `primary` | 完整探测 www 两线路 + starkeeper（`lines`=权威记录直连码）；连续不健康 ≥ `DR_FAILS_TO_SWITCH` 且自身网络正常 → 执行切备（`DR_SWITCH_ENABLED=0` 时只告警）；恢复条件满足时按 `DR_ROLE` 决定是否恢复 | 不把备站/未知状态当切换依据 |
+| `backup` / `mixed` | 用 `_dr-snap` 主站 IP 探测"主站是否恢复"（结果写 `lines`，当前入口码写 `live`）；健康则累计 `streak` 供 `DR_ROLE=full` 恢复判定；持续更新会签板 | **不评估切换**：无"拒绝覆盖"warning、无 `switch_refused` 告警（主站不健康正是切换后的预期状态）；不用备站入口码冒充主站路径 |
+| `empty` | 记录状态并告警，保持现状 | 不切换、不恢复 |
 
 ## 会签板
 
 | 记录 | 行为 |
 |---|---|
-| `_dr-pi` | 心跳降频写（契约 2.1 schema，含 seq/verdict/net/mode/fast/fails/lines/temp/up，≤255B）：verdict/fails/fast/net/mode 任一变化立即写；无变化时按 `DR_BOARD_WRITE_SECONDS`（默认 300s）最小间隔写；重启后第一轮必写一次 |
-| `_dr-snap` | 切换前 best-effort 写；已存在有效快照则**保留其 IP 数组**，只更新 ts/who/dir（防污染） |
+| `_dr-pi` | 心跳降频写（契约 2.1 schema，含 seq/verdict/net/mode/fast/fails/lines/live/temp/up，≤255B）：verdict/fails/fast/net/mode 任一变化立即写；无变化时按 `DR_BOARD_WRITE_SECONDS`（默认 300s）最小间隔写；重启后第一轮必写一次。**`lines` 恒表示主站路径**（primary=权威记录直连探测；backup/mixed=`_dr-snap` 主站 IP 直连探测），backup/mixed 下当前入口（备站/CNAME）的码进可选 `live`（仅展示，不参与闸门判定）——否则备站 200 会让云侧恢复闸门误放行，形成拉锯 |
+| `_dr-snap` | 切换前 best-effort 写；IP 数组优先级：`last_good_ips`（最后一次"权威查询成功且线路探测健康"时的主站 IP）→ 已存在有效快照的数组（只更新 ts/who/dir）→ 两者皆无时只写 ts/who/dir、**不写任何数组**（绝不把当前可能被攻击的记录当恢复目标） |
 | `_dr-gh` | 只读；按契约第三节 peer 语义（absent/stale/unknown/healthy/unhealthy）做恢复闸门 |
 
 任一读写失败 → 记日志降级继续，**绝不让容灾因会签通道故障而失效**（契约第五节）。
@@ -205,4 +215,6 @@ sudo systemctl disable dr-agent     # 取消开机自启（彻底回滚）
   日志单文件 512KB × 2 份轮转。
 - **切换动作**：`www` default/oversea A → `76.76.21.21`（Vercel，幂等收敛）；
   `starkeeper` default 先删光 A 再加 `CNAME starkeeper-bpw.pages.dev`。
-  已处于 `backup/mixed/empty` 的目标拒绝覆盖并告警（幂等保护，不写快照）。
+  仅在 `primary` 语义下评估切换；`backup/mixed/empty` 不评估、不告警（主站不健康
+  是切换后的预期状态）。primary 聚合态下个别目标推导异常/已是备站时仍拒绝覆盖
+  （执行层幂等保护）。

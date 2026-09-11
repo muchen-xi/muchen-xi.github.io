@@ -22,6 +22,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 推导权威状态（失败回退本地文件）
+        id: dr_mode
+        continue-on-error: true
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+        run: |
+          # 契约 §一/§五.2：从权威 DNS 记录推导 starkeeper 状态（default 线路 CNAME=backup / A=primary）。
+          # 树莓派可在国内独立切到 CNAME（backup），云侧文件会滞后——若只看文件会去 rotate 写 A
+          # 与 CNAME 冲突（2026-09-12 演练缺陷 #4）。dr_board.py 缺失或 API/凭据故障时回退读本地文件（现行为）。
+          FALLBACK=$(python3 -c "import json;print(json.load(open('monitoring/starkeeper_state.json')).get('mode','primary'))" 2>/dev/null || true)
+          FALLBACK=${FALLBACK:-primary}
+          DERIVED=$(python3 monitoring/scripts/dr_board.py mode starkeeper 2>/dev/null || true)
+          case "$DERIVED" in
+            primary|backup|mixed|empty) ;;
+            *) DERIVED="" ;;
+          esac
+          if [ -z "$DERIVED" ]; then
+            echo "::warning::dr_board.py mode starkeeper 推导失败（脚本未就绪/API 或凭据故障）— 回退本地文件 mode=$FALLBACK"
+            echo "mode=$FALLBACK" >> "$GITHUB_OUTPUT"
+            echo "file_mode=$FALLBACK" >> "$GITHUB_OUTPUT"
+            echo "derived=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "权威推导 mode=$DERIVED（文件旧 mode=$FALLBACK）"
+          # 契约 §五.3：以推导为准并回写文件，保证 update-dns.py 的既有守卫同步收敛
+          python3 - "$DERIVED" <<'PY'
+          import json, sys
+          path = 'monitoring/starkeeper_state.json'
+          try:
+              with open(path) as f:
+                  data = json.load(f)
+          except Exception:
+              data = {}
+          data['mode'] = sys.argv[1]
+          with open(path, 'w') as f:
+              json.dump(data, f)
+          PY
+          echo "mode=$DERIVED" >> "$GITHUB_OUTPUT"
+          echo "file_mode=$FALLBACK" >> "$GITHUB_OUTPUT"
+          echo "derived=true" >> "$GITHUB_OUTPUT"
+          if [ "$DERIVED" = "mixed" ] || [ "$DERIVED" = "empty" ]; then
+            echo "::warning::权威状态为 $DERIVED — 按保持现状处理，本轮不触发切换/恢复"
+          fi
+
       - name: 读取星钥监控状态
         id: state_file
         run: |
@@ -45,10 +90,10 @@ jobs:
         run: |
           if python3 monitoring/scripts/starkeeper_dns.py check; then
             echo "healthy=true" >> $GITHUB_OUTPUT
-            echo "健康 (mode=${{ steps.state_file.outputs.mode }})"
+            echo "健康 (mode=${{ steps.dr_mode.outputs.mode || steps.state_file.outputs.mode }})"
           else
             echo "healthy=false" >> $GITHUB_OUTPUT
-            echo "::warning::不健康 (mode=${{ steps.state_file.outputs.mode }})"
+            echo "::warning::不健康 (mode=${{ steps.dr_mode.outputs.mode || steps.state_file.outputs.mode }})"
           fi
 
       - name: 决策（计数 + 容灾/恢复/轮换）
@@ -57,15 +102,36 @@ jobs:
           ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
           ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
         run: |
-          FAILS=${{ steps.state_file.outputs.fails }}
-          STREAK=${{ steps.state_file.outputs.healthy_streak }}
-          MODE=${{ steps.state_file.outputs.mode }}
-          HEALTHY=${{ steps.check.outputs.healthy }}
+          FAILS="${{ steps.state_file.outputs.fails }}"
+          STREAK="${{ steps.state_file.outputs.healthy_streak }}"
+          MODE="${{ steps.dr_mode.outputs.mode || steps.state_file.outputs.mode }}"
+          FILE_MODE="${{ steps.dr_mode.outputs.file_mode || steps.state_file.outputs.mode }}"
+          HEALTHY="${{ steps.check.outputs.healthy }}"
           ACTION=none
           NEW_FAILS=$FAILS
           NEW_STREAK=$STREAK
           NEW_MODE=$MODE
-          if [ "$HEALTHY" = "true" ]; then
+          # 契约 §五.3 + 2026-09-12 演练缺陷 #4：权威推导 mode 与文件旧 mode 不一致（如树莓派
+          # 已切 CNAME 而云侧文件仍写 primary）时计数归零，防止 fails/healthy_streak 跨模式继承
+          # （备份模式第一轮就满足 streak>=3 会跳过"连续 3 次确认"立即恢复，放大拉锯风险）。
+          if [ "$MODE" != "$FILE_MODE" ]; then
+            echo "::warning::权威推导 mode=$MODE 与文件旧 mode=$FILE_MODE 不一致 — fails/healthy_streak 归零"
+            FAILS=0
+            STREAK=0
+            NEW_FAILS=0
+            NEW_STREAK=0
+          fi
+          if [ "$MODE" = "mixed" ] || [ "$MODE" = "empty" ]; then
+            # 契约 §四：mixed/empty 一律保持现状，不切换也不恢复，只告警（与 failover-monitor 一致）
+            if [ "$HEALTHY" = "true" ]; then
+              NEW_FAILS=0
+              NEW_STREAK=$((STREAK + 1))
+            else
+              NEW_FAILS=$((FAILS + 1))
+              NEW_STREAK=0
+            fi
+            echo "::warning::权威状态为 $MODE — 保持现状，本轮不触发切换/恢复"
+          elif [ "$HEALTHY" = "true" ]; then
             NEW_FAILS=0
             if [ "$MODE" = "primary" ]; then
               NEW_STREAK=$((STREAK + 1))
