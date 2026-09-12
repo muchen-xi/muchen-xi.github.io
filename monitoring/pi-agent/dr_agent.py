@@ -775,6 +775,37 @@ class ClockGuard(object):
 
 # ─────────────────────────── 主机信息 / 告警 ───────────────────────────
 
+def sntp_offset(server="ntp.aliyun.com", timeout=5):
+    """SNTP 单次查询，返回本机相对服务器的偏移秒数（正=本机偏快）；失败返回 None。
+
+    用途：心跳邮件里报一个**精确**的偏差。ClockGuard 用的 HTTP Date 头只有 1 秒精度，
+    报出来的 0.3~0.8 秒是量化噪声（实测真实偏差是毫秒级），容易让人误以为在漂移。
+    """
+    ntp_epoch = 2208988800
+    pkt = b"\x1b" + 47 * b"\0"
+    for _fam, _t, _p, _c, addr in socket.getaddrinfo(server, 123, socket.AF_INET, socket.SOCK_DGRAM):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(timeout)
+        try:
+            t1 = time.time()
+            s.sendto(pkt, addr)
+            data, _ = s.recvfrom(48)
+            t4 = time.time()
+        except Exception:
+            return None
+        finally:
+            s.close()
+        if len(data) < 48:
+            return None
+        # 接收时间戳在 32:40、发送时间戳在 40:48（各 8 字节：秒 + 小数）
+        t2 = struct.unpack("!II", data[32:40])
+        t3 = struct.unpack("!II", data[40:48])
+        t2 = t2[0] - ntp_epoch + t2[1] / 2.0 ** 32
+        t3 = t3[0] - ntp_epoch + t3[1] / 2.0 ** 32
+        return ((t2 - t1) + (t3 - t4)) / 2
+    return None
+
+
 def read_temp():
     try:
         with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
@@ -2202,6 +2233,7 @@ def heartbeat_body(ctx):
     disk = read_disk_percent(cfg["state_dir"])
     up = int(time.monotonic() - ctx.start_mono)
     sys_up = read_sys_uptime()
+    ntp_off = sntp_offset()      # 精确偏差（毫秒级）；失败为 None
     # 探测统计（当日 + 累计）；可用性按"完整探测轮数"算，避免轻探次数稀释
     st = state.get("stats") or {}
     n_full = int(st.get("full", 0))
@@ -2220,6 +2252,7 @@ def heartbeat_body(ctx):
         "磁盘(状态目录): %s\n"
         "进程 uptime: %ds / 系统 uptime: %s\n"
         "时钟偏差: %s\n"
+        "时钟对照: %s\n"
         "上次切换: %s (%s)\n"
         "最近详情: %s\n"
     ) % (
@@ -2237,7 +2270,10 @@ def heartbeat_body(ctx):
         ("%.1f ℃" % temp) if temp is not None else "获取不到（非树莓派或权限不足）",
         ("%.1f%%" % disk) if disk is not None else "获取不到",
         up, ("%ds" % sys_up) if sys_up is not None else "获取不到",
-        ("%.1fs" % ctx.clock.skew) if ctx.clock.skew is not None else "未测出",
+        (("%+.3f 秒（NTP 实测 ntp.aliyun.com）" % ntp_off) if ntp_off is not None
+         else "未测出（NTP 无响应，见下一行 HTTP Date 对照）"),
+        ("%.1fs（HTTP Date 对照，1 秒粒度 → DNS 写闸门用）" % ctx.clock.skew)
+        if ctx.clock.skew is not None else "未测出",
         state.get("last_switch_ts") or "从未", state.get("last_switch_dir") or "-",
         " | ".join(state.get("last_detail") or []) or "无",
     )
