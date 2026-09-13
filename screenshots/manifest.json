@@ -520,5 +520,11 @@
     "file": "2026-09-12.webp",
     "changed": false,
     "diff_pct": 1.25
+  },
+  {
+    "date": "2026-09-13",
+    "file": "2026-09-13.webp",
+    "changed": false,
+    "diff_pct": 0.59
   }
 ]
