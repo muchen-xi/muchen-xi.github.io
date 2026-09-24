@@ -670,6 +670,10 @@ def s7(t):
             "dns_ok": True, "neutral_codes": ["200"], "backup_code": "200", "backup_ok": True,
         }
         ctx.clock.refresh = lambda force=False: None
+        # 冻结「API 响应头校时」：mock 的 Date 头是真实时间，会把上面注入的 999s 偏差覆盖掉，
+        # 那样就测不到时钟闸门了（生产中该通道是有效的，这里只为隔离被测对象）。
+        if ctx.ali is not None:
+            ctx.ali.clock = None
         handler = _make_log_handler(log_collector)
         dr_agent.LOG.addHandler(handler)
 
@@ -1148,6 +1152,11 @@ def s14(t):
         cfg = dr_agent.load_config(cfg_path, explicit=True, state_dir=state_dir)
         ctx = dr_agent.build_ctx(cfg)
         ctx.alerts = AlertRecorder()
+        # 本场景进程内直调 execute_backup（不经探测），需给一个"已校时"的时钟：
+        # 生产里任何一次 API 调用/中立站点探测都会带上 Date 头完成校时；而 2026-09-24 起
+        # 时钟闸门是 fail-closed——未测出偏差就拒绝 DNS 写入（避免开机无网时用假时钟签名）。
+        ctx.clock.skew = 0.3
+        ctx.clock.checked_at = time.time()
         dr_agent.LOG.setLevel(logging.INFO)   # 进程内测试不经 setup_logging，默认级别会滤掉 INFO
         handler = _make_log_handler(log_collector)
         dr_agent.LOG.addHandler(handler)
