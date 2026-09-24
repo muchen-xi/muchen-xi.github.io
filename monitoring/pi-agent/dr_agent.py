@@ -370,6 +370,9 @@ class AliDNS(object):
         override = (os.environ.get("ALI_ENDPOINT") or "").strip()
         if override:
             self.endpoint = override if override.endswith("/") else override + "/"
+        # 由 build_ctx 注入 ClockGuard：用**阿里云 API 自己的 Date 头**校时
+        # （签名校验的正是它眼里的时间，比中立站点更贴切）
+        self.clock = None
 
     @staticmethod
     def _enc(s):
@@ -394,6 +397,13 @@ class AliDNS(object):
         url = self.endpoint + "?" + qs
         try:
             with urllib.request.urlopen(url, timeout=self.timeout) as resp:
+                if self.clock is not None:
+                    # 顺手用 API 响应头校时（失败静默，不影响调用）
+                    try:
+                        self.clock.update_from_headers(
+                            {k.lower(): v for k, v in resp.headers.items()})
+                    except Exception:
+                        pass
                 return json.load(resp)
         except urllib.error.HTTPError as e:
             body = ""
@@ -651,7 +661,7 @@ class State(object):
         "last_probe", "last_full_probe_epoch", "last_switch_ts", "last_switch_epoch",
         "last_switch_dir", "last_verdict", "last_net", "last_mode", "last_lines",
         "last_live", "last_main_lines", "last_detail", "last_peer", "tcp_cache",
-        "target_modes", "last_good_ips", "stats",
+        "target_modes", "last_good_ips", "stats", "hijack_streak",
         "clock_skew", "clock_checked_at", "alerts", "last_heartbeat",
         "board_sig", "last_board_write_epoch",
     )
@@ -677,6 +687,7 @@ class State(object):
             "last_main_lines": {},
             "last_good_ips": {},
             "stats": {},
+            "hijack_streak": 0,
             "last_detail": [],
             "last_peer": "",
             "tcp_cache": {},
@@ -767,9 +778,15 @@ class ClockGuard(object):
         self.checked_at = time.time()
 
     def allow_write(self):
-        """无法测出偏差时放行（降级），测出偏差则严格执行。"""
+        """时钟偏差未测出时**拒绝写入**（fail-closed）。
+
+        2026-09-24 修复：旧实现测不出偏差就放行（fail-open）。实测开机无网时会出问题——
+        无 RTC 的板子此时时钟是 fake-hwclock 的上次存档值（可能差一天），拿它去签阿里云请求
+        必然被拒（HTTP 400 InvalidTimeStamp，日志里已抓到 "写会签板 _dr-pi 失败: HTTP 400"）。
+        拒写更安全：没网时切换本来也做不成，等校时成功再写即可。
+        """
         if self.skew is None:
-            return True
+            return False
         return abs(self.skew) <= self.max_skew
 
 
@@ -812,6 +829,35 @@ def read_temp():
             return round(int(f.read().strip()) / 1000.0, 1)
     except Exception:
         return None
+
+
+def read_throttled():
+    """读 vcgencmd get_throttled（整数）；非树莓派取不到返回 None。
+
+    这些标志是 sticky 的（开机后清零），所以它反映的是"本次开机内是否发生过"。
+    位：0 当前欠压 / 1 当前频率封顶 / 2 当前降频 / 3 当前温度限 /
+        16 曾欠压 / 17 曾频率封顶 / 18 曾降频 / 19 曾软温度限
+    """
+    try:
+        out = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True,
+                             text=True, timeout=5).stdout.strip()
+        return int(out.split("=")[1], 16)
+    except Exception:
+        return None
+
+
+def describe_throttled(value):
+    """把 throttled 位图翻译成人话（用于心跳邮件）。"""
+    if value is None:
+        return "获取不到（非树莓派或 vcgencmd 缺失）"
+    if value == 0:
+        return "0x0 · 本次开机内无欠压/降频 ✅"
+    names = []
+    for bit, label in ((0, "当前欠压"), (1, "当前频率封顶"), (2, "当前降频"), (3, "当前软温度限"),
+                       (16, "曾欠压"), (17, "曾频率封顶"), (18, "曾降频"), (19, "曾软温度限")):
+        if value & (1 << bit):
+            names.append(label)
+    return "0x%x · %s" % (value, "、".join(names))
 
 
 def read_disk_percent(path):
@@ -1232,13 +1278,19 @@ def board_write_due(ctx, now=None):
 # ─────────────────────────── 权威状态推导（契约第一节） ───────────────────────────
 
 def authoritative_www_ips(ali, line):
+    """返回该线路的权威 A 记录列表。
+
+    ⚠️ 返回值语义（2026-09-24 修复）：**查询失败返回 None，确实无记录才返回 []**。
+    旧实现把异常吞掉返回 []，调用方无法区分二者 → API 抖动被当成"该线路无 A 记录"
+    → 线路标 000 不健康 → 连续 3 次就会误切备站（与 P0 自伤同一类风险）。
+    """
     if ali is None:
-        return []
+        return None
     try:
         return [r["value"] for r in ali.records("www", "A", line) if r["value"]]
     except Exception as e:
-        LOG.warning("⚠ 权威查询 www(%s) A 记录失败: %s", line, e)
-        return []
+        LOG.warning("⚠ 权威查询 www(%s) A 记录失败（按未知处理，不计入不健康）: %s", line, e)
+        return None
 
 
 def derive_www_mode(ali):
@@ -1398,9 +1450,14 @@ def probe_targets(ctx, res):
             for line in ("default", "oversea"):
                 key = "www." + line
                 ips = authoritative_www_ips(ali, line)
+                if ips is None:
+                    # 查询失败 ≠ 无记录：按"未知"处理，不标 000、不计入不健康（2026-09-24 修复）
+                    res["api_error"] = True
+                    res["detail"].append("%s 权威查询失败（按未知处理，不计入不健康）" % key)
+                    continue
                 if not ips:
                     res["lines"][key] = "000"
-                    res["detail"].append("%s 无 A 记录" % key)
+                    res["detail"].append("%s 无 A 记录（权威确实为空）" % key)
                     continue
                 res["www_auth_ips"] = sorted(set(res.get("www_auth_ips", [])) | set(ips))
                 code, _codes = _probe_ip_list(ips, HOST_WWW, key)
@@ -1581,6 +1638,11 @@ def probe_full(ctx):
     if res["net"] == "broken":
         res["verdict"] = "unknown"
         res["detail"].append("自身网络异常 → verdict=unknown，绝不切换")
+    elif res.get("api_error"):
+        # 权威视角不完整（查询失败）→ 按未知处理：不切换、不恢复、冻结计数。
+        # 否则 API 抖动会被当成"线路不健康"，连续 3 次就会误切（2026-09-24 修复）。
+        res["verdict"] = "unknown"
+        res["detail"].append("权威查询失败 → 视角不完整，本轮 unknown（不切换、不计数）")
     elif not res["lines"]:
         res["verdict"] = "unknown"
         backup_semantics = [t for t in cfg["targets"]
@@ -2249,6 +2311,7 @@ def heartbeat_body(ctx):
         "今日可用性: %s\n"
         "累计探测: 轻探 %d 次 / 全探 %d 轮（不健康 %d）/ 切换 %d 次\n"
         "温度: %s\n"
+        "供电状态: %s\n"
         "磁盘(状态目录): %s\n"
         "进程 uptime: %ds / 系统 uptime: %s\n"
         "时钟偏差: %s\n"
@@ -2268,6 +2331,7 @@ def heartbeat_body(ctx):
         int(st.get("total_light", 0)), int(st.get("total_full", 0)),
         int(st.get("total_unhealthy", 0)), int(st.get("total_switch", 0)),
         ("%.1f ℃" % temp) if temp is not None else "获取不到（非树莓派或权限不足）",
+        describe_throttled(read_throttled()),
         ("%.1f%%" % disk) if disk is not None else "获取不到",
         up, ("%ds" % sys_up) if sys_up is not None else "获取不到",
         (("%+.3f 秒（NTP 实测 ntp.aliyun.com）" % ntp_off) if ntp_off is not None
@@ -2324,6 +2388,8 @@ def build_ctx(cfg):
         ctx.clock.skew = float(skew)
         ctx.clock.checked_at = float(ctx.state.data.get("clock_checked_at") or 0)
     ctx.alerts = Alerter(cfg, ctx.state)
+    if ctx.ali is not None:
+        ctx.ali.clock = ctx.clock      # 让 API 响应头参与校时（见 AliDNS.call）
     return ctx
 
 
@@ -2399,12 +2465,23 @@ def run_tick(ctx):
                             "偏差 %.0fs > DR_CLOCK_SKEW_MAX=%d，阿里云签名会失效。\n"
                             "请校准树莓派时间。" % (ctx.clock.skew, cfg["clock_skew_max"]))
         if res.get("hijack"):
-            ctx.alerts.send("hijack", "[DR] ⚠ 递归解析与权威记录不一致（疑似劫持/污染）",
-                            "递归(223.5.5.5): %s\n权威: %s\n线路: %s\n详情: %s"
-                            % (",".join(res.get("recursive") or []) or "无",
-                               ",".join(res.get("www_auth_ips") or []) or "无",
-                               ", ".join("%s=%s" % (k, v) for k, v in sorted(res["lines"].items())),
-                               " | ".join(res["detail"])))
+            # 2026-09-24 降噪：优选 IP 轮换后会有一段"递归缓存仍旧 IP、权威已是新 IP"的窗口
+            # （TTL 600s），单轮不一致属正常。只有「持续 ≥2 轮（≈10 分钟，超过 TTL）」或
+            # 「递归结果不可达（真实用户受影响）」才告警，避免把正常轮换报成劫持。
+            state["hijack_streak"] = int(state.get("hijack_streak", 0)) + 1
+            if res.get("hijack_unhealthy") or int(state["hijack_streak"]) >= 2:
+                ctx.alerts.send(
+                    "hijack", "[DR] ⚠ 递归解析与权威记录持续不一致（疑似劫持/污染）",
+                    "递归(223.5.5.5): %s\n权威: %s\n线路: %s\n持续: 连续 %d 轮完整探测\n详情: %s\n"
+                    "\n说明: 若刚跑过优选 IP 轮换，递归侧可能还有最多 10 分钟缓存，属正常滞后；"
+                    "本告警仅在持续超过该窗口或递归结果不可达时发出。"
+                    % (",".join(res.get("recursive") or []) or "无",
+                       ",".join(res.get("www_auth_ips") or []) or "无",
+                       ", ".join("%s=%s" % (k, v) for k, v in sorted(res["lines"].items())),
+                       int(state["hijack_streak"]),
+                       " | ".join(res["detail"])))
+        else:
+            state["hijack_streak"] = 0
         if res.get("api_error") and res["verdict"] == "unknown" and res["net"] == "ok":
             ctx.alerts.send("api_error", "[DR] ⚠ 阿里云 API 异常，权威状态推导失败",
                             "已降级：不切换、不恢复、只告警。\n详情: %s" % " | ".join(res["detail"]))

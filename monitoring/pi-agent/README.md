@@ -20,8 +20,32 @@ Pi Zero W（512MB / armv6 / 单核 1GHz）上，30 秒一个 tick：
 | `dr_agent.py` | 观察者 / 切换执行器（纯标准库单文件） |
 | `install.sh` | 一键安装（root，幂等） |
 | `dr-agent.service` | systemd unit（`Restart=always` + 加固） |
+| `net-watchdog.sh` | **网络看门狗**：检测"链路还在但流量不通"的 WiFi 卡死并自愈（见下节） |
+| `net-watchdog.service` / `.timer` | 看门狗的 systemd 单元（每 2 分钟自检） |
 | `config.env.example` | 配置模板（带去默认值的注释） |
 | `README.md` | 本文档 |
+
+## 网络看门狗（无人值守必备）
+
+**背景（2026-09-24 实测）**：这块 Zero W 的 BCM43438（WiFi+BT 二合一）会周期性卡死——
+开机后网络正常几分钟，随后出现「链路仍关联、信号 -35dBm、但 DNS/流量全不通」，
+内核 `brcmfmac` 不报错（射频/固件层卡死），只能靠人工拔电恢复。该板蓝牙此前也报过
+`BCM Reset -110` 硬件故障，属同一颗芯片退化。
+
+看门狗把"手动拔电"变成"自愈"，每 2 分钟检查三项并在连续失败时逐级升级：
+
+| 连续失败 | 判定依据 | 处置 |
+|---|---|---|
+| 2 次（≈4 分钟） | `ping 网关` / `ping 223.5.5.5` / 解析中立域名 | 重置 WiFi 连接（`nmcli con up`） |
+| 4 次（≈8 分钟） | 同上 | 重启 NetworkManager |
+| 6 次（≈12 分钟） | 同上 | **整机重启**（带 1 小时冷却，避免重启风暴） |
+
+- 状态与日志：`/var/lib/net-watchdog/{fails,last_reboot,state.log}`（日志自动截断到 2000 行）
+- 手动跑一次看判定：`sudo /usr/local/bin/net-watchdog.sh; echo $?`（0 = 网络正常）
+- 网络恢复时会记一条 `✅ 网络恢复（此前连续失败 N 次）`
+
+> 这是**硬件退化的缓解手段**，不是修复。若换新板（Zero 2 W 等），可直接停用：
+> `sudo systemctl disable --now net-watchdog.timer`
 
 ## 部署步骤（树莓派）
 

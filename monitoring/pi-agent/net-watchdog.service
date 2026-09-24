@@ -1,0 +1,11 @@
+[Unit]
+Description=Network watchdog (detect WiFi lockups and self-heal)
+Documentation=file:///opt/dr-agent/README.md
+# 网络起来之后再开始看护；不起到网络也可以跑（它本身就是查网络的）
+After=network.target NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/net-watchdog.sh
+# 检查失败（网络不通）会用退出码 1 表示，这不是单元故障，别标红
+SuccessExitStatus=0 1

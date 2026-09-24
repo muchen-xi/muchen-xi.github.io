@@ -1,0 +1,13 @@
+[Unit]
+Description=Network watchdog timer (every 2 minutes)
+Documentation=file:///opt/dr-agent/README.md
+
+[Timer]
+# 开机 3 分钟后开始第一次检查（给网络足够时间就绪），此后每 2 分钟一次
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=net-watchdog.service
+
+[Install]
+WantedBy=timers.target

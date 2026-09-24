@@ -193,11 +193,24 @@ fi
 install -m 0644 "${SRC_DIR}/dr-agent.service" "$SERVICE_FILE"
 log "✅ systemd unit 已安装: ${SERVICE_FILE}"
 
+# 网络看门狗（可选，但强烈建议：Zero W 的 WiFi 会卡死，卡死后需人工拔电）
+if [[ -f "${SRC_DIR}/net-watchdog.sh" && -f "${SRC_DIR}/net-watchdog.service" && -f "${SRC_DIR}/net-watchdog.timer" ]]; then
+    install -m 0755 "${SRC_DIR}/net-watchdog.sh" /usr/local/bin/net-watchdog.sh
+    install -m 0644 "${SRC_DIR}/net-watchdog.service" /etc/systemd/system/net-watchdog.service
+    install -m 0644 "${SRC_DIR}/net-watchdog.timer" /etc/systemd/system/net-watchdog.timer
+    log "✅ 网络看门狗已安装（每 2 分钟自检；卡死时自动重置 WiFi → 重启 NM → 整机重启）"
+fi
+
 systemctl daemon-reload
 if systemctl enable --now dr-agent.service; then
     log "✅ dr-agent 已设为开机自启并启动"
 else
     warn "systemctl enable --now 失败 — 请检查: systemctl status dr-agent"
+fi
+if [[ -f /etc/systemd/system/net-watchdog.timer ]]; then
+    systemctl enable --now net-watchdog.timer >/dev/null 2>&1 \
+        && log "✅ 网络看门狗定时器已启用" \
+        || warn "网络看门狗定时器启用失败 — 请检查: systemctl status net-watchdog.timer"
 fi
 
 # ─────────────────────────── 5. 收尾提示 ───────────────────────────
