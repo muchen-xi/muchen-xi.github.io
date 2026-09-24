@@ -1,0 +1,19 @@
+[Unit]
+Description=WiFi stability tuning (power save off + TX power cap)
+Documentation=file:///opt/dr-agent/README.md
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+# 开机时 wlan0 可能尚未注册，重试等待（最多 60 秒）。
+# ① 关省电：避免网卡打盹造成探测超时
+# ② 封顶发射功率到 12dBm：树莓派常贴着路由器（实测 -31dBm），满功率(31dBm)纯属浪费，
+#    而射频满功率发射是电流尖峰最大、弱电源最容易塌落的时刻。
+#    实测：31→12dBm 后信号/速率/丢包完全不变（-31dBm / 72.2Mbit/s / 0% 丢包）。
+# 背景：2026-09-24 排查 Zero W 周期性"链路在、流量不通"卡死时的稳定性调优项。
+ExecStart=/bin/sh -c "for i in $(seq 1 30); do iw dev wlan0 set power_save off && iw dev wlan0 set txpower fixed 1200 && exit 0; sleep 2; done; echo wlan0 未出现; exit 1"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

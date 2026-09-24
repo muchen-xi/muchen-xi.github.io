@@ -57,6 +57,27 @@ fails=$((fails + 1))
 echo "$fails" > "$FAIL_FILE"
 log "⚠ 网络不可达（第 $fails 次）：网关=${gw:-无} LAN=${lan_ok} WAN=${wan_ok} DNS=${dns_ok}"
 
+# 首次失败时抓一份「故障现场快照」：事后才能判断是丢 IP（DHCP 续租失败）、丢路由、
+# 还是链路层卡死（关联还在但流量不通）。快照留在 SD 卡上，保留最近 5 份。
+if [ "$fails" = "1" ]; then
+    diag="$STATE_DIR/diag-$(date +%Y%m%d-%H%M%S).txt"
+    {
+        echo "=== 网络故障现场 $(date '+%F %T') ==="
+        echo "--- ip addr (wlan0) ---"; ip -4 addr show wlan0 2>&1
+        echo "--- ip route ---"; ip route 2>&1
+        echo "--- iw link / info ---"; iw dev wlan0 link 2>&1; iw dev wlan0 info 2>&1 | head -6
+        echo "--- /proc/net/wireless ---"; cat /proc/net/wireless 2>&1
+        echo "--- nmcli device ---"; nmcli -t device status 2>&1 | head -6
+        echo "--- DHCP 租约 ---"; ls -la /var/lib/NetworkManager/*.lease 2>&1 | head -3
+        cat /var/lib/NetworkManager/*.lease 2>/dev/null | grep -E "expire|renew" | head -4
+        echo "--- dmesg 尾部 20 行 ---"; dmesg 2>/dev/null | tail -20
+        echo "--- 温度/供电 ---"; vcgencmd measure_temp 2>&1; vcgencmd get_throttled 2>&1
+    } > "$diag" 2>&1
+    log "📋 已抓取故障现场快照: $(basename "$diag")"
+    # 只保留最近 5 份
+    ls -1t "$STATE_DIR"/diag-*.txt 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
+fi
+
 case "$fails" in
     2)
         log "→ ① 重置 WiFi 连接（nmcli con up $CON_NAME）"

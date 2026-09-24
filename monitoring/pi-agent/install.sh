@@ -201,6 +201,12 @@ if [[ -f "${SRC_DIR}/net-watchdog.sh" && -f "${SRC_DIR}/net-watchdog.service" &&
     log "✅ 网络看门狗已安装（每 2 分钟自检；卡死时自动重置 WiFi → 重启 NM → 整机重启）"
 fi
 
+# WiFi 稳定性调优（关省电 + 发射功率封顶 12dBm）
+if [[ -f "${SRC_DIR}/wifi-tuning.service" ]]; then
+    install -m 0644 "${SRC_DIR}/wifi-tuning.service" /etc/systemd/system/wifi-tuning.service
+    log "✅ WiFi 调优单元已安装（关省电 + txpower 封顶 12dBm）"
+fi
+
 systemctl daemon-reload
 if systemctl enable --now dr-agent.service; then
     log "✅ dr-agent 已设为开机自启并启动"
@@ -211,6 +217,11 @@ if [[ -f /etc/systemd/system/net-watchdog.timer ]]; then
     systemctl enable --now net-watchdog.timer >/dev/null 2>&1 \
         && log "✅ 网络看门狗定时器已启用" \
         || warn "网络看门狗定时器启用失败 — 请检查: systemctl status net-watchdog.timer"
+fi
+if [[ -f /etc/systemd/system/wifi-tuning.service ]]; then
+    systemctl enable --now wifi-tuning.service >/dev/null 2>&1 \
+        && log "✅ WiFi 调优已生效" \
+        || warn "WiFi 调优失败 — 请检查: systemctl status wifi-tuning.service"
 fi
 
 # ─────────────────────────── 5. 收尾提示 ───────────────────────────
