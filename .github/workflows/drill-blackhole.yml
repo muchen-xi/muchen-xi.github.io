@@ -1,0 +1,43 @@
+name: 演练·黑洞注入（临时）
+
+# ⚠️ 临时演练工具（2026-10-01 容灾黑洞演练专用）—— 演练结束后随 dr_drill.py 一并删除。
+# 只做三件事：只读快照 / 注入黑洞 IP / 按快照恢复；不触碰任何生产容灾代码路径。
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'status=只读快照 / inject=注入黑洞 / restore=按快照恢复'
+        required: true
+        default: 'status'
+        type: choice
+        options:
+          - status
+          - inject
+          - restore
+      snapshot:
+        description: 'restore 用：把 status/inject 输出的 SNAPSHOT_JSON 整行粘贴到这里'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dr-drill-blackhole
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 执行演练动作
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+          DRILL_ACTION: ${{ github.event.inputs.action }}
+          DRILL_SNAPSHOT: ${{ github.event.inputs.snapshot }}
+        run: python3 monitoring/scripts/dr_drill.py
