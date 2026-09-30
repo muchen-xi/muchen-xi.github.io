@@ -5,76 +5,167 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <meta http-equiv="refresh" content="30">
 <title>健康检查 · 晨曦的宇宙</title>
-<link rel="stylesheet" href="https://248200-xyz.pages.dev/theme/space.css">
 <style>
+/* ============================================================
+   瑞士国际主义（Vignelli / Helvetica）：纯黑白 + 单一红，
+   8px 基线网格，圆角 0，无阴影无动效，层级靠字号不靠颜色。
+   ============================================================ */
+:root{
+  --ink:#000;
+  --paper:#fff;
+  --gray:#8a8a8a;
+  --line:#d9d9d9;
+  --accent:#e2231a;
+  --font:"Helvetica Neue",Helvetica,Arial,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+}
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-body{font-family:system-ui,'Microsoft YaHei',sans-serif;background:#0a0a1a;color:#c8c8d4;min-height:100vh}
-.container{max-width:720px;margin:0 auto;padding:48px 20px 32px}
-.header{text-align:center;margin-bottom:32px}
-.header h1{font-size:clamp(20px,4vw,32px);font-weight:700;background:linear-gradient(135deg,#6c8cff,#a06cff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:3px;margin-bottom:6px}
-.header .sub{font-size:12px;color:#6a6a8a;letter-spacing:2px}
-.banner{text-align:center;padding:14px 20px;border-radius:12px;font-size:15px;font-weight:600;letter-spacing:1px;margin-bottom:28px}
-.banner-ok{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);color:#22c55e}
-.banner-bad{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:28px}
-.card{background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.12);border-radius:12px;padding:18px 20px;transition:border-color .2s}
-.card:hover{border-color:rgba(99,102,241,.3)}
-.card-header{display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(99,102,241,.08)}
-.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-.dot-ok{background:#22c55e;box-shadow:0 0 8px rgba(34,197,94,.5)}
-.dot-bad{background:#ef4444;box-shadow:0 0 8px rgba(239,68,68,.5)}
-.dot-check{background:#f59e0b;box-shadow:0 0 8px rgba(245,158,11,.5);animation:pulse 1.5s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.card-title{font-size:14px;font-weight:600;color:#e2e2e8;line-height:1.3}
-.card-body{display:flex;flex-direction:column;gap:8px}
-.card-row{display:flex;justify-content:space-between;align-items:center}
-.card-label{font-size:11px;color:#6a6a8a;letter-spacing:.5px}
-.card-value{font-size:13px;font-weight:500;color:#c8c8d4}
-.card-time{font-size:11px;color:#9090a8;font-family:'Courier New',monospace}
-.info-bar{display:flex;flex-wrap:wrap;justify-content:center;gap:24px;padding:16px 20px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.08);border-radius:12px;margin-bottom:16px;font-size:12px;color:#9090a8}
-.info-bar strong{color:#6366f1;font-weight:600}
-.refresh-hint{text-align:center;font-size:11px;color:#4a4a6a;letter-spacing:1px;margin-top:8px}
-.footer{text-align:center;margin-top:40px;padding-top:20px;border-top:1px solid rgba(99,102,241,.08);font-size:11px;color:#4a4a6a;letter-spacing:1px;line-height:1.8}
-.footer strong{color:#6366f1;font-weight:600}
-@media(max-width:480px){.container{padding:32px 14px 24px}.cards{grid-template-columns:1fr}.info-bar{flex-direction:column;align-items:center;gap:8px}}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:var(--font);
+  background:var(--paper);
+  color:var(--ink);
+  font-size:16px;
+  line-height:1.45;
+  font-variant-numeric:tabular-nums;
+  -webkit-font-smoothing:antialiased;
+  text-wrap:pretty;
+}
+.wrap{max-width:960px;margin:0 auto;padding:32px 24px 40px}
 
-.pv-section-title{font-size:12px;color:#6a6a8a;letter-spacing:2px;text-align:center;margin-bottom:10px}
-.pv-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px}
-.pv-card{background:rgba(108,140,255,.04);border:1px solid rgba(108,140,255,.1);border-radius:10px;padding:12px 14px;text-align:center;transition:border-color .2s}
-.pv-card:hover{border-color:rgba(108,140,255,.25)}
-.pv-card .site-name{font-size:12px;font-weight:600;color:#8a8ac0;margin-bottom:6px}
-.pv-card .site-count{font-size:22px;font-weight:700;color:#6366f1}
-.pv-card .site-label{font-size:10px;color:#4a4a6a;margin-top:2px}
-.pv-status{text-align:center;font-size:11px;color:#4a4a6a;min-height:18px}
+/* ---------- 版头 ---------- */
+.masthead{border-bottom:2px solid var(--ink);padding-bottom:16px;margin-bottom:32px}
+.kicker{font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:var(--gray);margin-bottom:8px}
+.masthead h1{font-size:clamp(32px,6vw,48px);font-weight:700;letter-spacing:-.02em;line-height:1.05}
+.meta{display:flex;flex-wrap:wrap;gap:4px 24px;margin-top:16px;font-size:12px;letter-spacing:.08em;color:var(--gray)}
+.meta b{font-weight:500;color:var(--ink)}
+
+/* ---------- 状态横条（标识牌） ---------- */
+.banner{display:flex;align-items:baseline;gap:16px;padding:12px 16px;margin-bottom:40px;color:#fff;font-weight:700}
+.banner .bar-lbl{font-size:12px;letter-spacing:.24em;text-transform:uppercase;font-weight:500;opacity:.62;flex-shrink:0}
+.bar-ok{background:var(--ink)}
+.bar-alert{background:var(--accent)}
+.bar-check{background:var(--ink)}
+
+/* ---------- 栏目：超大序号 + 黑色横条 ---------- */
+.sec{margin-bottom:48px}
+.sec-head{display:flex;align-items:stretch;margin-bottom:16px}
+.sec-no{font-size:32px;font-weight:700;line-height:1;align-self:center;padding-right:12px}
+.sec-bar{flex:1;min-width:0;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;font-size:14px;font-weight:700;letter-spacing:.04em}
+.sec-note{font-size:12px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;opacity:.62;white-space:nowrap}
+.badge{background:#fff;color:var(--ink);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:1px 6px}
+
+/* ---------- 数据格 ---------- */
+.grid{display:grid;gap:0;border-top:1px solid var(--ink)}
+.probe{grid-template-columns:repeat(3,1fr)}
+.probe .cell{padding:16px;border-left:1px solid var(--line)}
+.probe .cell:first-child{border-left:0;padding-left:0}
+.name{font-size:14px;font-weight:700;letter-spacing:.02em;margin-bottom:12px}
+.stat{font-size:16px;font-weight:500;margin-bottom:8px}
+.num{font-size:48px;font-weight:700;line-height:1;letter-spacing:-.02em;margin-bottom:8px}
+.unit{font-size:14px;font-weight:500;letter-spacing:.06em;margin-left:6px}
+.stamp,.lbl{font-size:12px;letter-spacing:.08em;color:var(--gray)}
+.lbl-sm{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gray)}
+
+/* ---------- 方块标记（黑=正常 / 红=需处理 / 空心红=无法判定） ---------- */
+.mk{display:inline-block;width:9px;height:9px;background:var(--ink);margin-right:8px;vertical-align:1px}
+.mk.alert{background:var(--accent)}
+.mk.hollow{background:transparent;border:1.5px solid var(--accent);vertical-align:2px}
+.mk.mute{background:var(--gray)}
+.ok{color:var(--ink)}
+.alert{color:var(--accent)}
+.mute{color:var(--gray)}
+
+/* ---------- 观察者 ---------- */
+.obs-hero{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--ink);border-bottom:1px solid var(--line)}
+.obs-hero > div{padding:16px;border-left:1px solid var(--line)}
+.obs-hero > div:first-child{border-left:0;padding-left:0}
+.obs-hero .big{font-size:32px;font-weight:700;line-height:1.1;letter-spacing:-.02em;margin-top:6px}
+.obs-hero .lbl{margin-bottom:2px;display:block}
+.kv-grid{display:grid;grid-template-columns:repeat(4,1fr)}
+.kv{padding:12px 0;border-bottom:1px solid var(--line)}
+.kv .lbl{display:block;margin-bottom:4px}
+.kv .val{font-size:16px;font-weight:500}
+.tbl{margin-top:20px}
+.tbl-cap{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--gray);border-bottom:1px solid var(--ink);padding-bottom:6px;margin-bottom:2px}
+.tr{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+.tr .code{font-weight:700;font-size:16px;letter-spacing:.04em}
+.src{font-size:12px;letter-spacing:.06em;color:var(--gray);margin-top:12px}
+.note{font-size:12px;line-height:1.7;color:var(--gray);max-width:68ch;border-top:1px solid var(--line);margin-top:16px;padding-top:10px}
+
+/* ---------- PV ---------- */
+.pv{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.pv-item{padding:16px;border-left:1px solid var(--line)}
+.pv-item:first-child{border-left:0;padding-left:0}
+.pvnum{font-size:48px;font-weight:700;line-height:1;letter-spacing:-.02em;margin:6px 0}
+
+/* ---------- 页脚 ---------- */
+.foot{border-top:2px solid var(--ink);margin-top:56px;padding-top:12px;font-size:12px;letter-spacing:.08em;color:var(--gray);display:flex;flex-wrap:wrap;gap:4px 24px}
+
+/* ---------- 响应式 ---------- */
+@media(max-width:720px){
+  .wrap{padding:24px 16px 32px}
+  .probe,.obs-hero{grid-template-columns:1fr}
+  .probe .cell{border-left:0;border-top:1px solid var(--line);padding:16px 0}
+  .probe .cell:first-child{border-top:0;padding-top:0}
+  .obs-hero > div{border-left:0;border-top:1px solid var(--line);padding:12px 0}
+  .obs-hero > div:first-child{border-top:0;padding-top:0}
+  .kv-grid{grid-template-columns:repeat(2,1fr);column-gap:16px}
+  .pv-item{border-left:0;border-bottom:1px solid var(--line);padding:12px 0}
+  .pv-item:last-child{border-bottom:0}
+  .sec-no{font-size:24px;padding-right:8px}
+}
 </style>
 </head>
 <body>
-<div class="container">
-<div class="header">
-  <h1>晨曦的宇宙 · 健康检查</h1>
-  <p class="sub">实时监控所有站点状态</p>
-</div>
+<div class="wrap">
 
-<div id="banner"></div>
-<div id="cards" class="cards"></div>
+<header class="masthead">
+  <div class="kicker">System Health · 系统状态</div>
+  <h1>晨曦的宇宙</h1>
+  <div class="meta">
+    <span>直连探测 <b>客户端</b></span>
+    <span>观察者 <b>DoH 直读会签板</b></span>
+    <span>刷新 <b>30S</b></span>
+    <span id="check-time">检查中…</span>
+  </div>
+</header>
 
-<!-- PV Stats from KV (no auth -- health subdomain trusted by _middleware.js) -->
-<div id="pv-section">
-  <p class="pv-section-title">📊 近7天访问统计 (KV)</p>
-  <div id="pv-cards" class="pv-cards"></div>
-  <div id="pv-status" class="pv-status">加载中...</div>
-</div>
+<main>
+  <div id="banner"></div>
 
-<div class="info-bar">
-  <span>检查方式 <strong>客户端直连</strong></span>
-  <span>自动刷新 <strong>30s</strong></span>
-  <span id="check-time">检查中...</span>
-</div>
-<div class="refresh-hint">每30秒自动刷新</div>
-<div class="footer">
-  Powered by <strong>Cloudflare Pages</strong> · 晨曦的宇宙<br>
-  &copy; 2026 chenxiuniverse.top
-</div>
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-no">01</span>
+      <div class="sec-bar"><span>直连探测 · 站点可达性</span><span class="sec-note">HEAD / 30S</span></div>
+    </div>
+    <div class="grid probe" id="cards"></div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-no">02</span>
+      <div class="sec-bar"><span>国内观察者 · 树莓派 Zero W</span><span class="sec-note" id="obs-bar-note"></span></div>
+    </div>
+    <div id="observer-card"></div>
+    <div id="observer-status" class="src">读取会签板 _dr-pi.chenxiuniverse.top …</div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-no">03</span>
+      <div class="sec-bar"><span>访问统计 · 近 7 天</span><span class="sec-note">KV</span></div>
+    </div>
+    <div class="grid pv" id="pv-cards"></div>
+    <div id="pv-status" class="src">加载中…</div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>© 2026 chenxiuniverse.top</span>
+  <span>Powered by Cloudflare Pages</span>
+  <span>自动刷新 30S</span>
+</footer>
+
 </div>
 
 <script>
@@ -101,57 +192,193 @@ async function checkTarget(target) {
   }
 }
 
-function render(results) {
-  const allOk = results.every(r => r.ok);
+function render(results, pi) {
+  const targetsOk = results.every(r => r.ok);
+  const piUnknown = !!pi && !pi.error && pi.rec && pi.rec.verdict === 'unknown';
+  const piOk = !!pi && !pi.error && pi.age <= PI_STALE_SECONDS && !piUnknown;
   const banner = document.getElementById('banner');
-  banner.innerHTML = allOk
-    ? '<div class="banner banner-ok">✅ 所有系统运行正常</div>'
-    : '<div class="banner banner-bad">⚠️ 部分服务异常</div>';
 
-  const cards = document.getElementById('cards');
-  cards.innerHTML = results.map(r => {
-    const color = r.ok ? '#22c55e' : '#ef4444';
-    const dotClass = r.ok ? 'dot-ok' : 'dot-bad';
-    const statusText = r.ok ? '在线' : (r.error || 'HTTP '+r.status);
-    return `<div class="card">
-      <div class="card-header">
-        <span class="dot ${dotClass}"></span>
-        <span class="card-title">${esc(r.name)}</span>
-      </div>
-      <div class="card-body">
-        <div class="card-row">
-          <span class="card-label">状态</span>
-          <span class="card-value" style="color:${color};font-weight:600">${statusText}</span>
-        </div>
-        <div class="card-row">
-          <span class="card-label">延迟</span>
-          <span class="card-value">${r.latency} ms</span>
-        </div>
-        <div class="card-row">
-          <span class="card-label">检查时间</span>
-          <span class="card-value card-time">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span>
-        </div>
-      </div>
+  let msg;
+  if (targetsOk && piOk) msg = '所有系统运行正常';
+  else if (targetsOk && piUnknown) msg = '观察者自身网络异常，暂无法确认国内视角';
+  else if (targetsOk) msg = '站点可达，但国内观察者心跳异常';
+  else msg = '部分服务异常';
+  const barClass = (targetsOk && piOk) ? 'bar-ok' : 'bar-alert';
+  banner.innerHTML = `<div class="banner ${barClass}"><span class="bar-lbl">Status</span><span>${msg}</span></div>`;
+
+  const stamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  document.getElementById('cards').innerHTML = results.map(r => {
+    const statusText = r.ok ? '在线' : (r.error || 'HTTP ' + r.status);
+    const mk = r.ok ? '<span class="mk"></span>' : '<span class="mk alert"></span>';
+    return `<div class="cell">
+      <div class="name">${esc(r.name)}</div>
+      <div class="stat ${r.ok ? 'ok' : 'alert'}">${mk}${esc(statusText)}</div>
+      <div class="num">${r.latency}<span class="unit">MS</span></div>
+      <div class="stamp">检查 ${stamp}</div>
     </div>`;
   }).join('');
 
-  document.getElementById('check-time').innerHTML = '检查完成 <strong>' + new Date().toLocaleTimeString('zh-CN',{hour12:false}) + '</strong>';
+  document.getElementById('check-time').innerHTML = '检查完成 <b>' + stamp + '</b>';
 }
 
-// 初始加载动画
-document.getElementById('banner').innerHTML = '<div class="banner" style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);color:#f59e0b">🔍 正在检查所有站点...</div>';
+// ---------------------------------------------------------------------------
+// 国内观察者（Pi Zero W）：DoH 直读会签板 _dr-pi TXT
+// 契约见 monitoring/DR-OBSERVER-CONTRACT.md §2.1。走阿里云公共 DNS（国内可达 + 带 CORS），
+// 纯客户端解析，备份站（Vercel）同样可用。
+// ---------------------------------------------------------------------------
+const DR_PI_RECORD = '_dr-pi.chenxiuniverse.top';
+const DR_DOH_ENDPOINTS = ['https://dns.alidns.com/resolve', 'https://223.5.5.5/resolve'];
+const PI_STALE_SECONDS = 1200; // 契约 peer --max-age 默认值：心跳超 20 分钟视为观察者失联
+const LINE_NAMES = { 'www.default': 'www 默认线路', 'www.oversea': 'www 海外线路', 'starkeeper': '星钥官网' };
+const MODE_NAMES = { primary: '主站', backup: '备站', mixed: '混合', empty: '无记录', unknown: '未知' };
+const VERDICT_NAMES = { healthy: '健康', unhealthy: '不健康', unknown: '无法判定' };
+
+// 阿里云 TXT 往返会转义内层双引号（写 {"a":1} 读回 {\"a":1}，见契约 §2.2）——剥引号 + 反转义，与 dr_board.normalize_txt_value() 同规则
+function parseTXTData(data) {
+  let s = String(data == null ? '' : data).trim();
+  const quoted = s.match(/"(?:\\.|[^"\\])*"/g);
+  if (quoted && quoted.length) s = quoted.map(x => x.slice(1, -1)).join('');
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && i + 1 < s.length) { out += s[i + 1]; i++; }
+    else out += s[i];
+  }
+  return out;
+}
+
+async function fetchPiHeartbeat() {
+  let lastErr = null;
+  for (const base of DR_DOH_ENDPOINTS) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 6000);
+      const res = await fetch(`${base}?name=${encodeURIComponent(DR_PI_RECORD)}&type=TXT`, { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(t);
+      if (!res.ok) throw new Error('DoH HTTP ' + res.status);
+      const j = await res.json();
+      const txt = (j.Answer || []).filter(a => a.type === 16).map(a => parseTXTData(a.data)).join('');
+      if (!txt) throw new Error('无 TXT 记录');
+      const rec = JSON.parse(txt);
+      const ts = Date.parse(rec.ts || '');
+      if (!rec.ts || isNaN(ts)) throw new Error('心跳时间戳无效');
+      return { rec, age: Math.max(0, Math.round(Date.now() / 1000 - ts / 1000)) };
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('DoH 不可达');
+}
+
+function ageParts(sec) {
+  if (sec < 90) return { v: String(Math.round(sec)), u: '秒前' };
+  if (sec < 3600) return { v: String(Math.round(sec / 60)), u: '分钟前' };
+  if (sec < 86400) return { v: (sec / 3600).toFixed(1), u: '小时前' };
+  return { v: (sec / 86400).toFixed(1), u: '天前' };
+}
+function fmtUptime(sec) {
+  if (sec < 3600) return Math.round(sec / 60) + ' 分钟';
+  if (sec < 86400) return (sec / 3600).toFixed(1) + ' 小时';
+  return (sec / 86400).toFixed(1) + ' 天';
+}
+function codeState(code) {
+  const s = String(code == null ? '' : code);
+  if (!/^\d{3}$/.test(s)) return 'mute';
+  return (s === '000' || s[0] === '5') ? 'alert' : 'ok';
+}
+function codeMark(code) {
+  const st = codeState(code);
+  if (st === 'ok') return '<span class="mk"></span>';
+  if (st === 'alert') return '<span class="mk alert"></span>';
+  return '<span class="mk mute"></span>';
+}
+function kvRow(label, valueHtml) {
+  return `<div class="kv"><span class="lbl">${label}</span><span class="val">${valueHtml}</span></div>`;
+}
+function lineTable(obj, cap) {
+  const keys = Object.keys(obj || {});
+  if (!keys.length) return '';
+  return `<div class="tbl">
+    <div class="tbl-cap">${cap}</div>
+    ${keys.map(k => `<div class="tr"><span>${esc(LINE_NAMES[k] || k)}</span><span class="code ${codeState(obj[k])}">${codeMark(obj[k])}${esc(obj[k])}</span></div>`).join('')}
+  </div>`;
+}
+
+function renderObserver(state) {
+  const card = document.getElementById('observer-card');
+  const st = document.getElementById('observer-status');
+  const barNote = document.getElementById('obs-bar-note');
+  barNote.textContent = '';
+  const src = '来源 阿里云公共 DNS DoH · 会签板 <code>_dr-pi</code> TXT · TTL 600S · 心跳间隔 300S';
+
+  if (!state || state.error) {
+    card.innerHTML = `
+      <div class="obs-hero">
+        <div><span class="lbl">会签板</span><span class="big alert">读取失败</span></div>
+        <div><span class="lbl">原因</span><span class="big" style="font-size:16px;font-weight:500">${esc(state && state.error ? state.error : 'DoH 不可达')}</span></div>
+      </div>
+      <div class="note">读不到心跳 ≠ 站点故障，但也意味着无法确认国内视角是否有人值守（观察者失明）。</div>`;
+    st.innerHTML = src;
+    return;
+  }
+
+  const rec = state.rec, age = state.age;
+  const fresh = age <= PI_STALE_SECONDS;
+  const verdict = VERDICT_NAMES[rec.verdict] ? rec.verdict : 'unknown';
+  const vClass = verdict === 'healthy' ? 'ok' : (verdict === 'unhealthy' ? 'alert' : 'alert');
+  const vMark = verdict === 'healthy' ? '<span class="mk"></span>' : (verdict === 'unhealthy' ? '<span class="mk alert"></span>' : '<span class="mk hollow"></span>');
+  const mode = MODE_NAMES[rec.mode] ? rec.mode : 'unknown';
+  const mClass = mode === 'primary' ? 'ok' : (mode === 'backup' ? 'alert' : 'alert');
+  const netOk = rec.net === 'ok';
+  const netTxt = netOk ? '正常' : (rec.net === 'broken' ? '异常' : '—');
+  const fails = Number.isFinite(Number(rec.fails)) ? Number(rec.fails) : null;
+  const temp = Number.isFinite(Number(rec.temp)) ? Number(rec.temp) : null;
+  const tempTxt = temp == null ? '—' : temp.toFixed(1) + ' ℃';
+  const tempClass = temp == null ? 'mute' : (temp >= 75 ? 'alert' : 'ok');
+  const ageP = ageParts(age);
+
+  barNote.innerHTML = rec.fast ? '<span class="badge">Fast 升频</span>' : '';
+
+  card.innerHTML = `
+    <div class="obs-hero">
+      <div>
+        <span class="lbl">心跳</span>
+        <span class="big ${fresh ? 'ok' : 'alert'}">${ageP.v}<span class="unit">${ageP.u}</span></span>
+      </div>
+      <div>
+        <span class="lbl">站点判定</span>
+        <span class="big ${vClass}">${vMark}${VERDICT_NAMES[verdict]}</span>
+      </div>
+      <div>
+        <span class="lbl">权威模式</span>
+        <span class="big ${mClass}">${MODE_NAMES[mode]}</span>
+      </div>
+    </div>
+    <div class="kv-grid">
+      ${kvRow('在线状态', fresh ? '<span class="ok">在线</span>' : '<span class="alert">心跳超时</span>')}
+      ${kvRow('自身网络', `<span class="${netOk ? 'ok' : (rec.net === 'broken' ? 'alert' : 'mute')}">${netTxt}</span>`)}
+      ${kvRow('连续不健康', fails == null ? '<span class="mute">—</span>' : `<span class="${fails > 0 ? 'alert' : 'ok'}">${fails}</span>`)}
+      ${kvRow('温度', `<span class="${tempClass}">${tempTxt}</span>`)}
+      ${kvRow('进程运行', Number.isFinite(Number(rec.up)) ? fmtUptime(Number(rec.up)) : '<span class="mute">—</span>')}
+      ${kvRow('心跳序号', Number.isFinite(Number(rec.seq)) ? String(rec.seq) : '<span class="mute">—</span>')}
+      ${kvRow('探测节奏', rec.fast ? '<span class="alert">Fast 升频</span>' : 'Slow 常态')}
+      ${kvRow('数据源', 'TXT DoH')}
+    </div>
+    ${lineTable(rec.lines, '主站路径 · 探测码')}
+    ${lineTable(rec.live, '当前入口 · 探测码')}
+    <div class="note">心跳 ≤ ${PI_STALE_SECONDS / 60} 分钟视为在线（TTL 600S，DoH 直读不经缓存）。backup 模式下「主站路径」不健康属预期，入口状态看「当前入口」；站点判定 = 国内视角对主站路径的结论。</div>`;
+  st.innerHTML = src + ' · 最后心跳 ' + new Date(Date.parse(rec.ts)).toLocaleString('zh-CN', { hour12: false });
+}
+
+/* ---------- 初始占位 ---------- */
+document.getElementById('banner').innerHTML = '<div class="banner bar-check"><span class="bar-lbl">Status</span><span>正在检查所有站点…</span></div>';
 document.getElementById('cards').innerHTML = TARGETS.map(t => `
-  <div class="card">
-    <div class="card-header">
-      <span class="dot dot-check"></span>
-      <span class="card-title">${esc(t.name)}</span>
-    </div>
-    <div class="card-body">
-      <div class="card-row"><span class="card-label">状态</span><span class="card-value">检查中...</span></div>
-    </div>
+  <div class="cell">
+    <div class="name">${esc(t.name)}</div>
+    <div class="stat mute"><span class="mk mute"></span>检查中…</div>
   </div>
 `).join('');
-
+document.getElementById('observer-card').innerHTML = `
+  <div class="obs-hero">
+    <div><span class="lbl">会签板</span><span class="big mute">读取中…</span></div>
+  </div>`;
 
 async function loadPVStats(){
   var el=document.getElementById('pv-cards');
@@ -164,23 +391,28 @@ async function loadPVStats(){
     if(!res.ok)throw new Error('HTTP '+res.status);
     var data=await res.json();
     var dates=Object.keys(data).sort();
-    if(!dates.length)throw new Error('No data');
+    if(!dates.length)throw new Error('无数据');
     var totals={};
     dates.forEach(function(d){Object.entries(data[d]||{}).forEach(function(e){totals[e[0]]=(totals[e[0]]||0)+e[1]})});
     var sites=Object.entries(totals).sort(function(a,b){return b[1]-a[1]});
-    if(!sites.length)throw new Error('No sites');
+    if(!sites.length)throw new Error('无站点');
     var SITE_NAMES={www:'主站',pimanager:'PiManager',health:'健康面板',history:'进化史'};
-    el.innerHTML=sites.map(function(e){return '<div class="pv-card"><div class="site-name">'+esc(SITE_NAMES[e[0]]||e[0])+'</div><div class="site-count">'+e[1]+'</div><div class="site-label">7天PV</div></div>'}).join('');
-    st.textContent='数据来源 KV · 最新 '+dates[dates.length-1];
+    el.innerHTML=sites.map(function(e){return '<div class="pv-item"><div class="lbl">'+esc(SITE_NAMES[e[0]]||e[0])+'</div><div class="pvnum">'+e[1]+'</div><div class="lbl">7 天 PV</div></div>'}).join('');
+    st.textContent='来源 KV · 最新 '+dates[dates.length-1];
   }catch(e){
-    el.innerHTML='<div class="pv-card" style="grid-column:1/-1"><div class="site-name">数据不可用</div><div class="site-label" style="color:#6a6a8a">KV 端点暂不可达</div></div>';
+    el.innerHTML='<div class="pv-item"><div class="lbl">数据不可用</div><div class="pvnum">—</div><div class="lbl">KV 端点暂不可达</div></div>';
     st.textContent='PV 统计暂不可用：/_report_stats 端点未响应';
   }
 }
-// 执行检查
+
+// 执行检查（站点直连 + 观察者心跳并行）
 (async () => {
-  const results = await Promise.all(TARGETS.map(checkTarget));
-  render(results);
+  const [results, pi] = await Promise.all([
+    Promise.all(TARGETS.map(checkTarget)),
+    fetchPiHeartbeat().catch(e => ({ error: (e && e.message) || 'DoH 不可达' })),
+  ]);
+  render(results, pi);
+  renderObserver(pi);
   loadPVStats();
 })();
 </script>
