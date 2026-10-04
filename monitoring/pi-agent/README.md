@@ -70,8 +70,9 @@ journalctl -u dr-agent -f
 
 ```bash
 sudo -E ALI_KEY_ID=xxx ALI_KEY_SECRET=yyy \
-     SMTP_USERNAME=ops@example.com SMTP_PASSWORD=zzz REPORT_TO=you@example.com \
-     bash install.sh
+     SMTP_PRIMARY_USERNAME=chenxi@love.place SMTP_PRIMARY_PASSWORD=zzz \
+     SMTP_BACKUP_USERNAME=m20081225@qq.com SMTP_BACKUP_PASSWORD=yyy \
+     REPORT_TO=you@example.com bash install.sh
 ```
 
 安装脚本做的事：检查 root / python3 ≥ 3.9 / curl → 建 `/opt/dr-agent` 与 `/var/lib/dr-agent`
@@ -85,7 +86,7 @@ sudo -E ALI_KEY_ID=xxx ALI_KEY_SECRET=yyy \
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `DR_ROLE` | `switch_only` | 阶段一：只切不恢复（恢复判定只记录+告警）；`full` 才执行恢复 |
-| `DR_TARGETS` | `www,starkeeper` | 参与推导与切换的目标 |
+| `DR_TARGETS` | `www,starkeeper` | 参与推导与切换的目标；health 自动跟随 www，不要写入 |
 | `DR_TICK_SECONDS` / `DR_FULL_PROBE_SECONDS` / `DR_FAST_PROBE_SECONDS` | 30 / 300 / 30 | 节奏 |
 | `DR_TCP_FAILS_TO_ESCALATE` | 2 | TCP 轻探连续失败升 fast（兼容旧拼写 `DR_TCP_FAILS_TO_ESCAPE`） |
 | `DR_FAILS_TO_SWITCH` / `DR_STREAK_TO_RESTORE` | 3 / 3 | 切换 / 恢复阈值 |
@@ -95,7 +96,8 @@ sudo -E ALI_KEY_ID=xxx ALI_KEY_SECRET=yyy \
 | `DR_SWITCH_ENABLED` | 1 | 0 = 只闸住 DNS 写：判定满足时只告警不切换（探测/告警/心跳照常，上线验证用） |
 | `DR_BOARD_WRITE_SECONDS` | 300 | `_dr-pi` 心跳最小写入间隔；verdict/fails/fast/net/mode 变化时立即写 |
 | `DR_LIGHT_PROBE` | curl | 轻探模式：`curl` = 每 tick 真发一次 HTTPS（只打 `www.default`，能看出 5xx/TLS 问题，Zero W 上约 2 秒 CPU）；`tcp` = 只做三次握手（最省，但看不出应用层故障） |
-| `SMTP_*` / `REPORT_TO` | smtp.qiye.aliyun.com:465 | SMTP_SSL 告警 |
+| `SMTP_PRIMARY_*` / `SMTP_BACKUP_*` | 萌邮 mail.gov.moe:465 主 / QQ 兜底 | SMTP_SSL 发件账号，**主发失败自动改备用**；旧的单账号键 `SMTP_*` 仍兼容（视为主账号） |
+| `REPORT_TO` | 空 | 收件人，多个用英文逗号分隔 |
 
 缺 `ALI_KEY_ID/SECRET` 时：`--selftest` 明确报 ❌，`--loop` 拒绝启动（有意保护）。
 
@@ -126,7 +128,7 @@ sudo -E ALI_KEY_ID=xxx ALI_KEY_SECRET=yyy \
 
 | 权威 mode | agent 做什么 | agent 不做什么 |
 |---|---|---|
-| `primary` | 完整探测 www 两线路 + starkeeper（`lines`=权威记录直连码）；连续不健康 ≥ `DR_FAILS_TO_SWITCH` 且自身网络正常 → 执行切备（`DR_SWITCH_ENABLED=0` 时只告警）；恢复条件满足时按 `DR_ROLE` 决定是否恢复 | 不把备站/未知状态当切换依据 |
+| `primary` | 完整探测 www 两线路 + starkeeper（`lines`=权威记录直连码）；连续不健康 ≥ `DR_FAILS_TO_SWITCH` 且自身网络正常 → 执行切备（`www` 与跟随的 `health` 同线路切到 Vercel；`DR_SWITCH_ENABLED=0` 时只告警）；恢复条件满足时按 `DR_ROLE` 决定是否恢复 | 不把备站/未知状态当切换依据 |
 | `backup` / `mixed` | 用 `_dr-snap` 主站 IP 探测"主站是否恢复"（结果写 `lines`，当前入口码写 `live`）；健康则累计 `streak` 供 `DR_ROLE=full` 恢复判定；持续更新会签板 | **不评估切换**：无"拒绝覆盖"warning、无 `switch_refused` 告警（主站不健康正是切换后的预期状态）；不用备站入口码冒充主站路径 |
 | `empty` | 记录状态并告警，保持现状 | 不切换、不恢复 |
 
@@ -205,8 +207,8 @@ sudo /usr/bin/python3 /opt/dr-agent/dr_agent.py --once --dry-run  # 跑一轮但
 
 3. **改回 DNS**（二选一）：
 
-   - 控制台：`www` 的 default 与 oversea 线路 A 记录改为快照 IP；`starkeeper` 的 default
-     删除 CNAME，添加 A 记录 = 快照 `starkeeper` IP；
+   - 控制台：`www` 与 `health` 的 default 与 oversea 线路 A 记录改为快照 IP
+     （health 与 www 同 IP）；`starkeeper` 的 default 删除 CNAME，添加 A 记录 = 快照 `starkeeper` IP；
    - 命令：`python3 monitoring/scripts/failover-dns.py restore`（需 `ALI_KEY_ID/SECRET`，
      脚本自带状态文件回退与逐 IP 校验）。
 
@@ -237,7 +239,8 @@ sudo systemctl disable dr-agent     # 取消开机自启（彻底回滚）
   （证书校验失败时降级为不校验并记警告，保证仍能取到 HTTP 码）。
 - **SD 卡保护**：`state.json` 只在内容变化时写（临时文件 + rename 原子替换），
   日志单文件 512KB × 2 份轮转。
-- **切换动作**：`www` default/oversea A → `76.76.21.21`（Vercel，幂等收敛）；
+- **切换动作**：`www` 与跟随的 `health` default/oversea A → `76.76.21.21`（Vercel，幂等收敛；
+  health 为 www 从属目标，不独立判定、不进快照/lines，恢复复用 www 已验证 IP）；
   `starkeeper` default 先删光 A 再加 `CNAME starkeeper-bpw.pages.dev`。
   仅在 `primary` 语义下评估切换；`backup/mixed/empty` 不评估、不告警（主站不健康
   是切换后的预期状态）。primary 聚合态下个别目标推导异常/已是备站时仍拒绝覆盖

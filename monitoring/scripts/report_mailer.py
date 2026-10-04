@@ -40,7 +40,7 @@ EVENTS_DIR = REPO_ROOT / "logs" / "events"
 STATS_FILE = REPO_ROOT / "logs" / "stats.json"
 
 DOMAIN = "chenxiuniverse.top"
-SITES = ["www", "pimanager"]
+SITES = ["www", "health", "pimanager"]
 
 # ─── 阿里云 DNS (延迟导入，避免未装 SDK 时脚本加载失败) ───
 
@@ -62,7 +62,7 @@ def _get_dns_client():
 
 
 def get_current_dns_state() -> dict:
-    """查询当前阿里云 DNS 状态（www/pimanager 的 default+oversea 线路 IP）"""
+    """查询当前阿里云 DNS 状态（www/health/pimanager 的 default+oversea 线路 IP）"""
     try:
         from alibabacloud_alidns20150109 import models as alidns_models
         client = _get_dns_client()

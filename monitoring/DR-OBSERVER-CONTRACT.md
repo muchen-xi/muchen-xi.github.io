@@ -18,6 +18,15 @@ GH_PAGES_IPS = ["185.199.108.153", "185.199.109.153", "185.199.110.153", "185.19
 BACKUP_SET   = VERCEL_IPS ∪ GH_PAGES_IPS
 ```
 
+### 1.1 health 从属目标（2026-10-04 加入）
+
+`health`（监控面板；与 www 同 CF Pages 项目、同批优选 IP）为 **www 的从属目标**，契约 v1 的 schema 与字节预算**完全不变**：
+
+- **不参与** `mode` 推导、`peer --target` 目标语义，**不进**会签板 `lines` / `_dr-snap`（维护方另行 grep 确认：health 与 www 的探测码/状态永远同源，独立记录无增量信息）。
+- 容灾切换/恢复**同线路跟随 www**：`failover-dns.py` 与树莓派 `dr_agent.py` 在执行 www 的切/恢复时同步改 health 的 default+oversea A 记录。
+- health **不写** `.failover_state.json`、**不进** backup 幂等守卫（防 health 脏状态阻塞 www 切换——一次失败的 restore 就能造成）；restore 直接**复用 www 同线路已验证 IP**（零 split state）。
+- 故障检测仍只看 www：www 不健康 ⇔ health 同源不健康（两者同项目同 IP，已验证）。
+
 ## 二、TXT 会签板
 
 三个记录，子域固定，**默认线路**，TTL 600，值 ≤255 字节（超长要裁剪，见下）：

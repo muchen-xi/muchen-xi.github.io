@@ -14,12 +14,15 @@ DNS 容灾切换脚本 — A 记录架构版
 
 DNS 架构 (post CF Pages 迁移):
   - www       → A records (default: CF优选IP ×N, oversea: CF优选IP ×N)
+  - health    → A records (同 www 结构；跟随 www 切换/恢复，主站故障时面板仍可用)
   - pimanager → A records (同 split-line 结构)
   - @ (root)  → A records (GH Pages IPs, 不变)
 
 容灾策略:
-  - PRIMARY (正常):  www default+oversea A → CF优选IPs → CF Pages
-  - BACKUP (容灾):   www default+oversea A → Vercel anycast IP → Vercel 备用站
+  - PRIMARY (正常):  www/health default+oversea A → CF优选IPs → CF Pages
+  - BACKUP (容灾):   www/health default+oversea A → Vercel anycast IP → Vercel 备用站
+  - health 为 www 的从属目标（2026-10-04 加入）：不写状态文件、不进幂等守卫
+    （防脏状态阻塞 www 切换）；restore 直接复用 www 同线路已验证 IP（零 split state）
   - root @ 记录不变
   - pimanager 可选容灾 (--pimanager)，仍切 GH Pages IP（Vercel 未绑定 pimanager 域名）
 
@@ -79,12 +82,35 @@ FALLBACK_CF_IPS = [
 # 状态文件路径（项目根目录）
 STATE_FILE = Path(__file__).resolve().parent.parent / ".failover_state.json"
 
-# 需要容灾的子域和线路（www 两条线路都切备；pimanager 仅 default）
-FAILOVER_TARGETS = [
+# 需要容灾的子域和线路
+#   - www 两条线路都切备（Vercel）
+#   - health 跟随 www：同项目同批优选 IP，同线路一起切/恢复，不独立判定
+#   - pimanager 仅 default（GH Pages IP），仅 --pimanager 时纳入
+# ⚠ 顺序即依赖：health 必须排在 www 之后（restore 复用 www 已验证的 IP）
+WWW_TARGETS = [
     {"rr": "www", "line": "default"},
     {"rr": "www", "line": "oversea"},
+]
+HEALTH_TARGETS = [
+    {"rr": "health", "line": "default"},
+    {"rr": "health", "line": "oversea"},
+]
+DEFAULT_TARGETS = WWW_TARGETS + HEALTH_TARGETS  # 默认 backup/restore 目标集（替代旧 FAILOVER_TARGETS[:2]）
+PIMANAGER_TARGETS = [
     {"rr": "pimanager", "line": "default"},
 ]
+FAILOVER_TARGETS = DEFAULT_TARGETS + PIMANAGER_TARGETS
+
+
+def state_targets(targets: list[dict]) -> list[dict]:
+    """过滤出需要读写状态文件/幂等守卫的目标（health 除外）。
+
+    health 跟随 www（恢复目标与校验全部复用 www），不写 .failover_state.json、
+    不进幂等守卫：否则一次失败的 restore 留下"health 残留备站"的脏状态后，
+    下次真实故障时守卫会直接 exit(1) —— 连 www 都无法切换（自伤面）。
+    切换循环仍遍历全部 targets（health 始终收敛到与 www 一致）。
+    """
+    return [t for t in targets if t["rr"] != "health"]
 
 
 def state_key(rr: str, line: str) -> str:
@@ -521,10 +547,11 @@ def cmd_backup(
     include_pimanager: bool = False,
 ) -> None:
     """切换到备站: www default+oversea A → Vercel 备用站 IP；pimanager → GH Pages IPs。"""
-    targets = FAILOVER_TARGETS if include_pimanager else FAILOVER_TARGETS[:2]
+    targets = FAILOVER_TARGETS if include_pimanager else DEFAULT_TARGETS
 
     # 1. 幂等保护：若目标子域+线路已是备站/混合状态，拒绝覆盖状态文件（否则原始 CF IP 永久丢失）
-    for target in targets:
+    #    health 不在守卫内（state_targets 过滤）——它不写状态文件，也不得因自身状态阻塞 www 切换
+    for target in state_targets(targets):
         rr = target["rr"]
         line = target["line"]
         current = get_current_ips(client, rr, line)
@@ -554,7 +581,8 @@ def cmd_backup(
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "action": "backup",
         }
-        for target in targets:
+        # health 不写状态文件（恢复目标复用 www；见 state_targets 注释）
+        for target in state_targets(targets):
             rr = target["rr"]
             line = target["line"]
             state[state_key(rr, line)] = get_current_ips(client, rr, line)
@@ -575,9 +603,14 @@ def cmd_backup(
         line = target["line"]
         current_ips = get_current_ips(client, rr, line)
 
+        if rr == "health" and not current_ips:
+            # 不凭空为已下线的子域创建记录（与树莓派 dr_agent.execute_backup 行为一致）
+            print(f"\n  {rr}.{DOMAIN} ({line}): 无 A 记录，跳过（不凭空建记录）")
+            continue
+
         print(f"\n  {rr}.{DOMAIN} ({line}):")
         print(f"    当前: {current_ips}")
-        target_ips = BACKUP_IPS if rr == "www" else GH_PAGES_IPS
+        target_ips = BACKUP_IPS if rr in ("www", "health") else GH_PAGES_IPS
         print(f"    目标: {target_ips}")
 
         if update_to_ips(client, rr, line, target_ips, dry_run):
@@ -606,7 +639,7 @@ def cmd_restore(
     include_pimanager: bool = False,
 ) -> None:
     """恢复到主站: 将 www default+oversea A 记录恢复为 CF 优选 IPs。"""
-    targets = FAILOVER_TARGETS if include_pimanager else FAILOVER_TARGETS[:2]
+    targets = FAILOVER_TARGETS if include_pimanager else DEFAULT_TARGETS
 
     # 1. 读取状态文件
     saved_state: dict = {}
@@ -623,37 +656,53 @@ def cmd_restore(
     changed_any = False
     snap_state: Optional[dict] = None  # 懒加载：状态文件缺该目标时才读 _dr-snap
     restored_ips: dict = {}            # 本次实际写回的主站 IP，用于补全 _dr-snap
+    www_verified: dict = {}            # www 各线路 verify 通过的主站 IP；health 同线路直接复用
     for target in targets:
         rr = target["rr"]
         line = target["line"]
         key = state_key(rr, line)
         current_ips = get_current_ips(client, rr, line)
 
-        # 区分"保存过但为空"(恢复为空，不新增记录) 与"从未保存"(fallback 兜底)
-        target_ips = saved_state.get(key) if saved_state else None
-        if target_ips is None:
-            # 状态文件不存在 / 解析失败 / 缺该目标：先尝试 _dr-snap 会签板
-            if snap_state is None:
-                snap_state = read_dr_snap()
-            target_ips = snap_state.get(key)
-            if target_ips is not None:
-                print(f"  📂 {rr} ({line}): 状态文件无快照，改用 _dr-snap 会签板恢复目标 -> {target_ips}")
-        if target_ips is None:
-            target_ips = list(FALLBACK_CF_IPS)
-            print(f"  ⚠ {rr} ({line}): 无保存的 IP，fallback -> {target_ips}")
-
-        # 健康校验（2026-08-15 演练修复）：状态文件可能被污染/过期，
-        # 只写回可达的 IP；全部不可达则用 fallback；仍不可达则保持备站，需人工介入
-        if rr == "www":
-            print(f"  🔍 校验 {len(target_ips)} 个目标 IP 可达性...")
-            verified = verify_ips(target_ips, f"{rr}.{DOMAIN}")
-            if not verified:
-                print(f"  ⚠ {rr} ({line}) 保存的目标 IP 全部不可达，尝试 fallback CF IPs")
-                verified = verify_ips(list(FALLBACK_CF_IPS), f"{rr}.{DOMAIN}")
-            if not verified:
-                print(f"  ❌ {rr} ({line}): 无可用恢复目标，保持备站不写回，需人工介入", file=sys.stderr)
+        if rr == "health":
+            # health 跟随 www：只取 www 同线路已验证通过的 IP——不读状态文件/_dr-snap、
+            # 不做独立校验。www 恢复失败（verify 全空 continue）时 health 同步跳过、
+            # 保持备站，零 split state 风险（没有组件能发现 www/health 分叉）。
+            if not current_ips:
+                # 不凭空为已下线的子域创建记录（与树莓派 dr_agent.maybe_restore 行为一致）
+                print(f"  ⚠ {rr} ({line}): 无 A 记录，跳过（不凭空建记录）")
                 continue
-            target_ips = verified
+            target_ips = www_verified.get(line)
+            if target_ips is None:
+                print(f"  ⚠ {rr} ({line}): www 尚无已验证的恢复目标，跟随跳过（保持备站）")
+                continue
+            print(f"  🔗 {rr} ({line}): 跟随 www 恢复目标 -> {target_ips}")
+        else:
+            # 区分"保存过但为空"(恢复为空，不新增记录) 与"从未保存"(fallback 兜底)
+            target_ips = saved_state.get(key) if saved_state else None
+            if target_ips is None:
+                # 状态文件不存在 / 解析失败 / 缺该目标：先尝试 _dr-snap 会签板
+                if snap_state is None:
+                    snap_state = read_dr_snap()
+                target_ips = snap_state.get(key)
+                if target_ips is not None:
+                    print(f"  📂 {rr} ({line}): 状态文件无快照，改用 _dr-snap 会签板恢复目标 -> {target_ips}")
+            if target_ips is None:
+                target_ips = list(FALLBACK_CF_IPS)
+                print(f"  ⚠ {rr} ({line}): 无保存的 IP，fallback -> {target_ips}")
+
+            # 健康校验（2026-08-15 演练修复）：状态文件可能被污染/过期，
+            # 只写回可达的 IP；全部不可达则用 fallback；仍不可达则保持备站，需人工介入
+            if rr == "www":
+                print(f"  🔍 校验 {len(target_ips)} 个目标 IP 可达性...")
+                verified = verify_ips(target_ips, f"{rr}.{DOMAIN}")
+                if not verified:
+                    print(f"  ⚠ {rr} ({line}) 保存的目标 IP 全部不可达，尝试 fallback CF IPs")
+                    verified = verify_ips(list(FALLBACK_CF_IPS), f"{rr}.{DOMAIN}")
+                if not verified:
+                    print(f"  ❌ {rr} ({line}): 无可用恢复目标，保持备站不写回，需人工介入", file=sys.stderr)
+                    continue
+                target_ips = verified
+                www_verified[line] = list(verified)
 
         print(f"\n  {rr}.{DOMAIN} ({line}):")
         print(f"    当前: {current_ips}")

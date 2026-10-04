@@ -66,7 +66,8 @@ RECORD_ID_ENV_MAP = {
 
 
 # 容灾切换目标（mode=backup 时跳过，避免覆盖容灾 DNS 切换）
-FAILOVER_TARGETS = {"www", "pimanager"}
+# health 跟随 www（同批优选 IP、同切同恢复），同样不得被优选流程覆盖
+FAILOVER_TARGETS = {"www", "health", "pimanager"}
 
 
 def is_failover_backup() -> bool:
@@ -355,12 +356,12 @@ def main():
     # （树莓派独立切换时仓库文件不会更新，必须靠权威记录兜住）。
     backup_mode = is_failover_backup()
     if backup_mode:
-        print("⚠ 检测到容灾备份模式 (mode=backup) — 跳过 www/pimanager 更新，避免破坏容灾切换")
+        print("⚠ 检测到容灾备份模式 (mode=backup) — 跳过 www/health/pimanager 更新，避免破坏容灾切换")
     else:
         dr_mode = derive_mode_from_board(DR_BOARD_TARGET_WWW)
         if dr_mode == "backup":
             backup_mode = True
-            print("⚠ 权威记录显示主站处于容灾备站状态 — 跳过 www/pimanager 更新，避免破坏容灾切换")
+            print("⚠ 权威记录显示主站处于容灾备站状态 — 跳过 www/health/pimanager 更新，避免破坏容灾切换")
         elif dr_mode:
             print(f"🔎 权威记录显示 www 模式为 {dr_mode}，继续优选更新")
 

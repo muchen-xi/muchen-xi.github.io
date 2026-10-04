@@ -89,7 +89,7 @@ sudo systemctl restart dr-agent
 > 切换后会签板 `lines` 表达"主站路径"、`peer --target www` 在备站期间仍为 `unhealthy`，
 > 云侧闸门因此能拦下"主站还没恢复就切回"的拉锯。
 
-此时树莓派具备**独立切备能力**：两条线路连续 3 次完整探测不健康（≈90 秒）即把 www 切到 Vercel 备站、starkeeper 切到官方 CNAME，并写 `_dr-snap` 快照。
+此时树莓派具备**独立切备能力**：两条线路连续 3 次完整探测不健康（≈90 秒）即把 www 与 health（跟随 www）切到 Vercel 备站、starkeeper 切到官方 CNAME，并写 `_dr-snap` 快照。
 恢复仍由云监控执行，但云监控的恢复会被"树莓派说不健康"拦下——这正是防止境外视角把国内故障期间做的切换撤销的机制。
 
 **通过标准**：跑一次受控演练（黑洞注入 → 观察是否切 → 恢复），见第 3 节。
@@ -109,13 +109,14 @@ sudo systemctl restart dr-agent
 
 ```bash
 # 演练前：记录当前 DNS
-#   阿里云控制台 → 云解析 → www 的 A 记录（default / oversea 各 3 条）
+#   阿里云控制台 → 云解析 → www 与 health 的 A 记录（default / oversea 各 3 条）
 # 注入：把 www 两条线路的 A 记录全改成 203.0.113.1（RFC5737，全球不可路由）
 # 观察：
 sudo journalctl -u dr-agent -f          # 应看到 TCP 轻探失败 → 升 fast → 连续 3 次不健康 → 切换
 # 验证：
-#   · 阿里云控制台 www 两条线路变成 76.76.21.21
+#   · 阿里云控制台 www 与 health 两条线路都变成 76.76.21.21（health 跟随 www）
 #   · 浏览器访问 https://www.chenxiuniverse.top 正常（Vercel 备站）
+#   · 浏览器访问 https://health.chenxiuniverse.top 正常（Vercel 备站；需已在 Vercel 绑定该域名）
 #   · 收到切换告警邮件
 # 恢复：在云监控 workflow 里手动 dispatch（或等主站 IP 恢复后由云监控自动恢复）
 ```
@@ -145,4 +146,4 @@ sudo systemctl disable --now dr-agent     # 停服 + 取消开机自启
 # 完全移除：sudo rm -rf /opt/dr-agent /var/lib/dr-agent /etc/dr-agent.env /etc/systemd/system/dr-agent.service
 ```
 
-DNS 侧无残留：agent 只在故障时改 www / starkeeper 记录，`_dr-*` 三个 TXT 记录留着不影响任何服务（可作为下次上线的会签通道）。
+DNS 侧无残留：agent 只在故障时改 www / health / starkeeper 记录，`_dr-*` 三个 TXT 记录留着不影响任何服务（可作为下次上线的会签通道）。

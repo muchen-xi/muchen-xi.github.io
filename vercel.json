@@ -35,6 +35,7 @@
     }
   ],
   "redirects": [
+    { "source": "/", "has": [{ "type": "host", "value": "health.chenxiuniverse.top" }], "destination": "/health", "permanent": false },
     { "source": "/functions/:path*", "destination": "/", "statusCode": 404 },
     { "source": "/worker/:path*", "destination": "/", "statusCode": 404 },
     { "source": "/worker.js", "destination": "/", "statusCode": 404 },

@@ -25,6 +25,8 @@
   - 会签板：每轮写 _dr-pi（含 temp/up），读 _dr-snap 与 _dr-gh（peer 判定）。
   - 时钟防线：Pi Zero W 无 RTC，用 HTTP Date 头校时，偏差超限拒绝一切 DNS 写。
   - SMTP 告警 + 每日 08:00 心跳邮件；同类告警 30 分钟节流。
+    发件账号支持"主 → 备"两个（现网：萌邮 mail.gov.moe 主发、QQ 兜底），
+    主账号发不出去时自动改备用账号再试一次。
 
 用法
   python3 dr_agent.py --loop                  # systemd 常驻
@@ -165,6 +167,17 @@ DEFAULT_CONFIG = {
     "SMTP_PORT": "465",
     "SMTP_USERNAME": "",
     "SMTP_PASSWORD": "",
+    # 主/备发件账号（2026-10-01 起：萌邮 love.place 主发、QQ 兜底）。
+    # 主账号发不出去时自动改备用账号再试一次——邮件是这台观察者唯一的说话方式，
+    # 单点一挂就等于"节点还在跑但你听不到"。
+    "SMTP_PRIMARY_SERVER": "",
+    "SMTP_PRIMARY_PORT": "465",
+    "SMTP_PRIMARY_USERNAME": "",
+    "SMTP_PRIMARY_PASSWORD": "",
+    "SMTP_BACKUP_SERVER": "",
+    "SMTP_BACKUP_PORT": "465",
+    "SMTP_BACKUP_USERNAME": "",
+    "SMTP_BACKUP_PASSWORD": "",
     "SMTP_SENDER_NAME": "晨曦的宇宙 · 树莓派观察者",
     "REPORT_TO": "",
 }
@@ -272,6 +285,30 @@ def parse_env_file(path):
     return out
 
 
+def build_smtp_accounts(values):
+    """发件账号列表：主账号 → 备用账号，顺序即优先级。
+
+    - 有 SMTP_PRIMARY_* 就用主账号；否则退回旧的单账号键 SMTP_*（兼容旧配置）。
+    - SMTP_BACKUP_* 三项齐全才算备用账号；主账号发不出去时自动改用它再试一次。
+    """
+    def account(name, prefix):
+        server = (values.get(prefix + "_SERVER", "") or "").strip()
+        username = (values.get(prefix + "_USERNAME", "") or "").strip()
+        password = values.get(prefix + "_PASSWORD", "") or ""
+        if not (server and username and password):
+            return None
+        return {"name": name, "server": server,
+                "port": max(1, _int_or(values.get(prefix + "_PORT"), 465)),
+                "username": username, "password": password}
+
+    accounts = []
+    for acc in (account("主账号", "SMTP_PRIMARY") or account("主账号", "SMTP"),
+                account("备用账号", "SMTP_BACKUP")):
+        if acc:
+            accounts.append(acc)
+    return accounts
+
+
 def load_config(path, explicit=False, state_dir=None):
     """加载配置：默认值 < 配置文件 < 进程环境变量（systemd EnvironmentFile 已注入环境）。"""
     values = dict(DEFAULT_CONFIG)
@@ -304,7 +341,10 @@ def load_config(path, explicit=False, state_dir=None):
         if not t:
             continue
         if t not in ("www", "starkeeper"):
-            LOG.warning("⚠ 忽略未知 DR_TARGETS 目标: %s", t)
+            if t == "health":
+                LOG.warning("⚠ DR_TARGETS 中的 health 已忽略：health 自动跟随 www 切换，无需配置")
+            else:
+                LOG.warning("⚠ 忽略未知 DR_TARGETS 目标: %s", t)
             continue
         if t not in targets:
             targets.append(t)
@@ -316,6 +356,7 @@ def load_config(path, explicit=False, state_dir=None):
         LOG.warning("⚠ DR_ROLE=%s 非法，回退 switch_only", role)
         role = "switch_only"
 
+    smtp_accounts = build_smtp_accounts(values)
     cfg = {
         "config_path": path,
         "state_dir": state_dir or DEFAULT_STATE_DIR,
@@ -340,10 +381,17 @@ def load_config(path, explicit=False, state_dir=None):
         "light_probe": (values.get("DR_LIGHT_PROBE", "curl") or "curl").strip().lower(),
         "alert_enabled": _bool_or(values.get("DR_ALERT_ENABLED"), True),
         "dry_run": _bool_or(values.get("DR_DRY_RUN"), False),
-        "smtp_server": (values.get("SMTP_SERVER", "smtp.qiye.aliyun.com") or "").strip(),
-        "smtp_port": max(1, _int_or(values.get("SMTP_PORT"), 465)),
-        "smtp_username": (values.get("SMTP_USERNAME", "") or "").strip(),
-        "smtp_password": values.get("SMTP_PASSWORD", "") or "",
+        # 发件账号列表（主 → 备）；smtp_server/username/password 是"主账号"的别名，
+        # 供自检与状态展示使用（未配置任何账号时保持旧的默认值语义）。
+        "smtp_accounts": smtp_accounts,
+        "smtp_server": smtp_accounts[0]["server"] if smtp_accounts
+        else (values.get("SMTP_SERVER", "smtp.qiye.aliyun.com") or "").strip(),
+        "smtp_port": smtp_accounts[0]["port"] if smtp_accounts
+        else max(1, _int_or(values.get("SMTP_PORT"), 465)),
+        "smtp_username": smtp_accounts[0]["username"] if smtp_accounts
+        else (values.get("SMTP_USERNAME", "") or "").strip(),
+        "smtp_password": smtp_accounts[0]["password"] if smtp_accounts
+        else values.get("SMTP_PASSWORD", "") or "",
         "smtp_sender_name": values.get("SMTP_SENDER_NAME", DEFAULT_CONFIG["SMTP_SENDER_NAME"]),
         "report_to": [x.strip() for x in str(values.get("REPORT_TO", "")).split(",") if x.strip()],
     }
@@ -891,8 +939,7 @@ class Alerter(object):
         self.state = state
 
     def _configured(self):
-        return bool(self.cfg["smtp_server"] and self.cfg["smtp_username"]
-                    and self.cfg["smtp_password"] and self.cfg["report_to"])
+        return bool(self.cfg["smtp_accounts"] and self.cfg["report_to"])
 
     def send(self, kind, subject, body, force=False):
         if not self.cfg["alert_enabled"]:
@@ -910,24 +957,32 @@ class Alerter(object):
         if not force and (now - last) < ALERT_THROTTLE_SECONDS:
             LOG.info("🔕 同类告警节流中（%s），跳过: %s", kind, subject)
             return False
-        try:
-            # multipart/alternative：纯文本兜底 + HTML 卡片（邮件客户端按能力择一显示）
-            msg = MIMEMultipart("alternative")
-            msg.attach(MIMEText(body, "plain", "utf-8"))
-            msg.attach(MIMEText(_alert_html(subject, body), "html", "utf-8"))
-            msg["Subject"] = Header(subject, "utf-8")
-            msg["From"] = formataddr((str(Header(self.cfg["smtp_sender_name"], "utf-8")),
-                                      self.cfg["smtp_username"]))
-            msg["To"] = ", ".join(self.cfg["report_to"])
-            with smtplib.SMTP_SSL(self.cfg["smtp_server"], self.cfg["smtp_port"], timeout=25) as smtp:
-                smtp.login(self.cfg["smtp_username"], self.cfg["smtp_password"])
-                smtp.sendmail(self.cfg["smtp_username"], self.cfg["report_to"], msg.as_string())
-            alerts[kind] = now
-            LOG.info("📧 告警已发送: %s", subject)
-            return True
-        except Exception as e:
-            LOG.warning("⚠ 告警邮件发送失败（不影响主流程）: %s", e)
-            return False
+        # multipart/alternative：纯文本兜底 + HTML 卡片（邮件客户端按能力择一显示）
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        msg.attach(MIMEText(_alert_html(subject, body), "html", "utf-8"))
+        msg["Subject"] = Header(subject, "utf-8")
+        msg["To"] = ", ".join(self.cfg["report_to"])
+        # 主账号 → 备用账号依次尝试（任一台 SMTP 挂了都不至于"节点在跑但你说不上话"）
+        errors = []
+        for acc in self.cfg["smtp_accounts"]:
+            try:
+                msg["From"] = formataddr((str(Header(self.cfg["smtp_sender_name"], "utf-8")),
+                                          acc["username"]))
+                with smtplib.SMTP_SSL(acc["server"], acc["port"], timeout=25) as smtp:
+                    smtp.login(acc["username"], acc["password"])
+                    smtp.sendmail(acc["username"], self.cfg["report_to"], msg.as_string())
+                alerts[kind] = now
+                if acc is not self.cfg["smtp_accounts"][0]:
+                    LOG.info("📧 主账号发信失败，已由%s发出: %s", acc["name"], subject)
+                else:
+                    LOG.info("📧 告警已发送（%s）: %s", acc["name"], subject)
+                return True
+            except Exception as e:
+                errors.append("%s(%s): %s" % (acc["name"], acc["server"], e))
+                LOG.warning("⚠ %s(%s) 发信失败: %s", acc["name"], acc["server"], e)
+        LOG.warning("⚠ 全部发件账号失败，告警未送达（不影响主流程）: %s", subject)
+        return False
 
 
 # ─────────────────────────── 告警邮件排版（HTML 卡片） ───────────────────────────
@@ -1964,7 +2019,8 @@ def _switch_body(ctx, res, planned, changes):
         "本地状态: %s\n\n"
         "如需人工恢复（阶段一手动）:\n"
         "  1) 查看快照: python3 monitoring/scripts/dr_board.py get _dr-snap\n"
-        "  2) www default/oversea A 记录改回快照 IP；starkeeper default 删除 CNAME、加回快照 A 记录\n"
+        "  2) www/health default+oversea A 记录改回快照 IP（health 与 www 同 IP）；"
+        "starkeeper default 删除 CNAME、加回快照 A 记录\n"
         "  3) 或执行: python3 monitoring/scripts/failover-dns.py restore（需 ALI_KEY_ID/SECRET）\n"
         "  4) 重启观察者: sudo systemctl restart dr-agent\n"
     ) % (
@@ -2001,8 +2057,9 @@ def execute_backup(ctx, res, planned):
         LOG.info("⚠ [DRY RUN] 将切换 %s；快照回退数组=%s", planned, json.dumps(arrays, ensure_ascii=False))
         for target in planned:
             if target == "www":
-                for line in ("default", "oversea"):
-                    LOG.info("⚠ [DRY RUN] www(%s) → %s", line, VERCEL_IPS)
+                for rr in ("www", "health"):
+                    for line in ("default", "oversea"):
+                        LOG.info("⚠ [DRY RUN] %s(%s) → %s", rr, line, VERCEL_IPS)
             else:
                 LOG.info("⚠ [DRY RUN] starkeeper(default) → CNAME %s", PAGES_HOST)
         return False
@@ -2012,13 +2069,25 @@ def execute_backup(ctx, res, planned):
     for target in planned:
         try:
             if target == "www":
-                for line in ("default", "oversea"):
-                    current = [r["value"] for r in ctx.ali.records("www", "A", line)]
-                    if sorted(current) == sorted(VERCEL_IPS):
-                        changes.append("www(%s) 已是备站，跳过" % line)
-                        continue
-                    set_a_records(ctx, "www", line, VERCEL_IPS)
-                    changes.append("www(%s): %s → %s" % (line, ",".join(sorted(current)) or "无", ",".join(VERCEL_IPS)))
+                # health 跟随 www（2026-10-04）：同线路一起切到 Vercel。
+                # rr×line 粒度 try/except：health 写失败不得污染 www 的成败判定
+                # （否则已成功的 www 切换会被误报成 switch_fail「可能半切」）。
+                for rr in ("www", "health"):
+                    for line in ("default", "oversea"):
+                        try:
+                            current = [r["value"] for r in ctx.ali.records(rr, "A", line)]
+                            if rr == "health" and not current:
+                                # 不凭空为已下线的子域创建记录（www 保持原行为）
+                                LOG.warning("⚠ health(%s) 无 A 记录，跳过（不凭空建记录）", line)
+                                changes.append("health(%s) 无记录，跳过" % line)
+                                continue
+                            if sorted(current) == sorted(VERCEL_IPS):
+                                changes.append("%s(%s) 已是备站，跳过" % (rr, line))
+                                continue
+                            set_a_records(ctx, rr, line, VERCEL_IPS)
+                            changes.append("%s(%s): %s → %s" % (rr, line, ",".join(sorted(current)) or "无", ",".join(VERCEL_IPS)))
+                        except Exception as e:
+                            errors.append("%s(%s): %s" % (rr, line, e))
             else:
                 current = [r["value"] for r in ctx.ali.records("starkeeper", "A", "default")]
                 if starkeeper_to_backup(ctx):
@@ -2039,7 +2108,7 @@ def execute_backup(ctx, res, planned):
         LOG.error("❌ 切换失败/半切: %s", "; ".join(errors))
         ctx.alerts.send("switch_fail", "[DR] ❌ 容灾切换失败（可能半切）",
                         "目标: %s\n错误:\n  - %s\n已完成变更:\n  - %s\n"
-                        "请人工核对 www / starkeeper 解析状态。"
+                        "请人工核对 www / health / starkeeper 解析状态。"
                         % (",".join(planned), "\n  - ".join(errors),
                            "\n  - ".join(changes) if changes else "（无）"))
         return False
@@ -2163,6 +2232,16 @@ def maybe_restore(ctx, res):
                         continue
                     if set_a_records(ctx, "www", line, verified):
                         changes.append("www(%s) → %s" % (line, ",".join(verified)))
+                    # health 跟随 www（2026-10-04）：复用同线路已验证 IP，不读独立快照、
+                    # 不做独立校验（避免 www/health 分叉而无人能发现）。
+                    # health 写入异常单独捕获：不得把已成功的 www 恢复误报成 restore_fail。
+                    try:
+                        if not ctx.ali.records("health", "A", line):
+                            LOG.warning("⚠ health(%s) 无 A 记录，跳过（不凭空建记录）", line)
+                        elif set_a_records(ctx, "health", line, verified):
+                            changes.append("health(%s) → %s" % (line, ",".join(verified)))
+                    except Exception as e:
+                        errors.append("health(%s): %s" % (line, e))
             else:
                 ips = snap.get("starkeeper") or []
                 if not ips:
@@ -2577,7 +2656,7 @@ def cmd_loop(cfg):
              cfg["role"], ",".join(cfg["targets"]), cfg["dry_run"], cfg["state_dir"])
     LOG.info("📋 配置来源: %s（AK=%s, SMTP=%s）", cfg["config_path"],
              "已设置" if cfg["ali_key_id"] else "缺失",
-             "已设置" if (cfg["smtp_username"] and cfg["smtp_password"]) else "缺失/不完整")
+             "、".join(a["name"] for a in cfg["smtp_accounts"]) if cfg["smtp_accounts"] else "缺失/不完整")
     try:
         while True:
             started = time.time()
@@ -2752,19 +2831,20 @@ def cmd_selftest(cfg):
         except Exception as e:
             report("⚠", "阿里云 API 可达性", "探测异常: %s" % e)
 
-    # 5) SMTP 配置
-    missing = [k for k in ("smtp_server", "smtp_port", "smtp_username", "smtp_password", "report_to")
-               if not cfg.get(k)]
-    if missing:
-        report("❌", "SMTP 配置", "缺少: %s（告警与心跳将无法发送）" % ",".join(missing))
+    # 5) SMTP 配置（主账号 + 备用账号；只探主账号端口，备用账号不额外打网络）
+    accounts = cfg["smtp_accounts"]
+    if not accounts:
+        report("❌", "SMTP 配置", "未配置发件账号（SMTP_PRIMARY_* 或旧的 SMTP_*；告警与心跳将无法发送）")
+    elif not cfg["report_to"]:
+        report("❌", "SMTP 配置", "缺少收件人 REPORT_TO")
     else:
+        detail = "；".join("%s %s:%d" % (a["name"], a["server"], a["port"]) for a in accounts)
         try:
-            sock = socket.create_connection((cfg["smtp_server"], cfg["smtp_port"]), timeout=6)
+            sock = socket.create_connection((accounts[0]["server"], accounts[0]["port"]), timeout=6)
             sock.close()
-            report("✅", "SMTP 配置", "%s:%d 配置齐全且端口可达（收件人 %d 个）"
-                   % (cfg["smtp_server"], cfg["smtp_port"], len(cfg["report_to"])))
+            report("✅", "SMTP 配置", "%s（收件人 %d 个）" % (detail, len(cfg["report_to"])))
         except Exception as e:
-            report("⚠", "SMTP 配置", "配置齐全但端口不可达: %s" % e)
+            report("⚠", "SMTP 配置", "%s；主账号端口不可达: %s（发送时会自动改走备用账号）" % (detail, e))
 
     # 6) 时钟偏差
     guard = ClockGuard(cfg["clock_skew_max"])

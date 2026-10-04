@@ -26,6 +26,8 @@
       warning），对照 primary 语义同轮数会真的切换
   S14 缺陷 1：快照优先取 last_good_ips（预置后黑洞切换，存健康主站 IP 而非黑洞）；
       无 last_good 时保留有效旧快照数组；两者皆无只写 ts/who/dir
+  S15 health 跟随（2026-10-04 加入）：切 www 时 health 两线路同步 → Vercel；恢复时复用
+      www 已验证 IP 同组写回；health 不进 DR_TARGETS/_dr-snap/lines
 
 约定
   - 所有阿里云 API 打到本进程内嵌的 mock（monitoring/tests/mock_alidns.py），
@@ -1219,6 +1221,82 @@ def s14(t):
             t.check_eq(snap.get("dir"), "backup", "C：dir=backup")
             t.check_eq(snap.get("who"), "pi", "C：who=pi")
         t.check(log_collector.contains("不写 IP 数组"), "C：日志明确警告不写 IP 数组")
+    finally:
+        dr_agent.LOG.setLevel(prev_level)
+        if handler is not None:
+            dr_agent.LOG.removeHandler(handler)
+        for key, value in env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        srv.stop()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ─────────────────────────── S15 health 跟随 ───────────────────────────
+
+@scenario("S15", "health 跟随 www：切换/恢复同线路同 IP；不进 _dr-snap/lines/targets")
+def s15(t):
+    srv = mock_alidns.start_mock()
+    tmp, cfg_path, state_dir = make_env()
+    env_backup = dict((k, os.environ.get(k)) for k in ("ALI_ENDPOINT", "ALI_KEY_ID", "ALI_KEY_SECRET"))
+    handler = None
+    log_collector = LogCollector()
+    prev_level = dr_agent.LOG.level
+    try:
+        os.environ["ALI_ENDPOINT"] = srv.url
+        os.environ["ALI_KEY_ID"] = "mock-ak"
+        os.environ["ALI_KEY_SECRET"] = "mock-secret"
+        cfg = dr_agent.load_config(cfg_path, explicit=True, state_dir=state_dir)
+        ctx = dr_agent.build_ctx(cfg)
+        ctx.alerts = AlertRecorder()
+        ctx.clock.skew = 0.3
+        ctx.clock.checked_at = time.time()
+        dr_agent.LOG.setLevel(logging.INFO)
+        handler = _make_log_handler(log_collector)
+        dr_agent.LOG.addHandler(handler)
+
+        # ── A：切换。health 与 www 同线路同 IP；health 不进 DR_TARGETS ──
+        t.check_eq(cfg["targets"], ["www"], "前提：DR_TARGETS=www（health 不在配置中）")
+        srv.set_record("www", "A", "default", CF_IP_A)
+        srv.set_record("www", "A", "oversea", CF_IP_B)
+        srv.set_record("health", "A", "default", CF_IP_A)
+        srv.set_record("health", "A", "oversea", CF_IP_B)
+        ctx.state.data["last_good_ips"] = {
+            "www.default": [CF_IP_A], "www.oversea": [CF_IP_B],
+        }
+        res = {"lines": {"www.default": "000", "www.oversea": "000"}, "live": {},
+               "main_lines": {}, "mode": "primary", "net": "ok", "targets": {}, "detail": []}
+        ok = dr_agent.execute_backup(ctx, res, ["www"])
+        t.check(ok is True, "A：execute_backup 返回 True")
+        t.check_eq(zone_values(srv, "www", "A", "default"), [VERCEL_IP], "A：www(default) → Vercel")
+        t.check_eq(zone_values(srv, "www", "A", "oversea"), [VERCEL_IP], "A：www(oversea) → Vercel")
+        t.check_eq(zone_values(srv, "health", "A", "default"), [VERCEL_IP], "A：health(default) 跟随 → Vercel")
+        t.check_eq(zone_values(srv, "health", "A", "oversea"), [VERCEL_IP], "A：health(oversea) 跟随 → Vercel")
+        t.check_eq(len(srv.get_all("health", "A")), 2, "A：health 总记录数=2（原地 update，无重复添加）")
+        snap = board_json(srv, "_dr-snap")
+        t.check(snap is not None and not any(str(k).startswith("health") for k in (snap or {})),
+                "A：_dr-snap 无 health 键（不进会签板快照）")
+
+        # ── B：恢复（DR_ROLE=full）。www/health 均在 Vercel；快照持有主站 IP ──
+        snap_value = json.dumps({
+            "v": 1, "ts": fresh_ts(-7200), "who": "pi", "dir": "backup",
+            "www": [CF_IP_A], "www_oversea": [CF_IP_B],
+        }, separators=(",", ":"))
+        srv.set_record("_dr-snap", "TXT", "default", snap_value)
+        cfg["role"] = "full"     # 进程内直调 maybe_restore：走 full 恢复路径
+        ctx.state.data["streak"] = 3
+        res2 = {"lines": {}, "live": {}, "main_lines": {}, "mode": "backup", "net": "ok",
+                "targets": {"www": {"mode": "backup", "fresh": True}}, "detail": [],
+                "snap": json.loads(snap_value), "peer": "healthy"}
+        t.check(tcp_ok(CF_IP_A), "B 前提：主站 IP 可达（%s:443）" % CF_IP_A)
+        dr_agent.maybe_restore(ctx, res2)
+        t.check_eq(zone_values(srv, "www", "A", "default"), [CF_IP_A], "B：www(default) 恢复 → CF IP")
+        t.check_eq(zone_values(srv, "www", "A", "oversea"), [CF_IP_B], "B：www(oversea) 恢复 → CF IP")
+        t.check_eq(zone_values(srv, "health", "A", "default"), [CF_IP_A],
+                   "B：health(default) 跟随恢复 → 与 www 同组 CF IP")
+        t.check_eq(zone_values(srv, "health", "A", "oversea"), [CF_IP_B], "B：health(oversea) 跟随恢复")
     finally:
         dr_agent.LOG.setLevel(prev_level)
         if handler is not None:

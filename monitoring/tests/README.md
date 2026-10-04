@@ -11,6 +11,9 @@ python monitoring/tests/test_coop_scenarios.py
 
 # 只跑指定场景（开发调试用）
 python monitoring/tests/test_coop_scenarios.py S2 S12
+
+# failover-dns.py 独立离线测试（秒级、零网络、SDK 桩）
+python monitoring/tests/test_failover_dns.py
 ```
 
 - 纯标准库、**不依赖 pytest**；逐场景打印 ✅/❌，末尾汇总；任一断言失败 → `exit 1`。
@@ -24,7 +27,8 @@ python monitoring/tests/test_coop_scenarios.py S2 S12
 | 文件 | 说明 |
 |---|---|
 | `mock_alidns.py` | 假 Alidns 服务（内存 zone + 故障注入 + 调用统计），可内嵌可 CLI |
-| `test_coop_scenarios.py` | S0-S14 场景与断言（本文件是唯一入口） |
+| `test_coop_scenarios.py` | S0-S15 场景与断言（本文件是唯一入口） |
+| `test_failover_dns.py` | `monitoring/scripts/failover-dns.py` 离线测试（SDK 桩 + 内存 zone，零网络）：health 跟随语义 F1-F6 |
 | `test_starkeeper_safety.py` | 另一条独立回归：`monitoring/scripts/starkeeper_dns.py` 的"零记录空窗"防护（与本套无关，单独运行） |
 | `README.md` | 本文档 |
 
@@ -47,6 +51,7 @@ python monitoring/tests/test_coop_scenarios.py S2 S12
 | **S12** starkeeper 安全 | 先建后删，任何失败不留裸域 | 断言1 非冲突 add 失败→A 原样、无 CNAME、有告警；断言2 删 A 失败→A+CNAME 并存（mixed）、CNAME 生效；断言3 成功→只剩 CNAME；断言4 恢复时 A 写回失败→CNAME 仍在。补充：冲突类错误才允许"删 A 后立即 add"，二次失败告警"无记录状态，需人工介入" |
 | **S13** 缺陷 5（进程内） | backup 语义不评估切换、无告警噪音 | zone=Vercel + 快照主站黑洞，4 轮后 fails=4≥3（旧实现会进入"幂等保护拒绝"路径）：无"拒绝覆盖/幂等保护/以下目标不切换"warning、`AlertRecorder` 无 `switch_refused`、www 记录未动、`_dr-pi` 照写（verdict=unhealthy/lines=000/live=200）。对照：同进程把 zone 变黑洞（primary）跑 3 轮 → 出现"满足切换条件"且 zone 切到 Vercel |
 | **S14** 缺陷 1（进程内） | 快照优先取 last_good_ips、绝不写当前记录 | A：预置 `last_good_ips` + 一份数组为黑洞的旧快照 → `execute_backup` 后快照数组 = last_good_ips（黑洞未进入，优先于旧快照）；B：无 last_good + 有效旧快照 → 旧数组原样保留；C：两者皆无 → 只写 ts/who/dir、无任何数组（切换照常执行） |
+| **S15** health 跟随（进程内） | health 与 www 同切同恢复、不进会签板 | 前提 `DR_TARGETS=www`（health 不在配置中）；A：`execute_backup(["www"])` → www 与 health 两线路都 → Vercel（原地 update 无重复）、`_dr-snap` 无 health 键；B：`maybe_restore`（role=full/streak=3）→ health 复用 www 同线路已验证 IP 写回（与 www 同组 CF IP） |
 
 ## mock_alidns.py
 
@@ -98,8 +103,8 @@ srv.clear_faults()
 1. 在 `test_coop_scenarios.py` 里写函数并加装饰器，注册顺序即运行顺序：
 
    ```python
-   @scenario("S15", "一句话标题")
-   def s15(t):
+   @scenario("S16", "一句话标题")
+   def s16(t):
        srv = mock_alidns.start_mock()
        tmp, cfg_path, state_dir = make_env(DR_ROLE="full")   # 关键字覆盖配置
        try:
@@ -143,7 +148,8 @@ srv.clear_faults()
 - **S11 阶段 B 的"立即写"上界**：切换触发依赖下一次完整探测（slow 模式最长
   `DR_FULL_PROBE_SECONDS`=30s），所以"立即"指"判定变化的当轮 tick 立即写"，测试用
   `间隔 < DR_BOARD_WRITE_SECONDS` 证明不是等心跳间隔到点。
-- **未覆盖**：真实阿里云 API 的签名/限流/错误码差异；SMTP 发信链路；systemd/install.sh；
+- **未覆盖**：真实阿里云 API 的签名/限流/错误码差异（failover-dns.py 用 SDK 桩模拟响应
+  形态，F1-F6 不触网）；SMTP 发信链路；systemd/install.sh；
   GitHub workflow 对 `dr_board.py` 的编排（云侧规则在本套测试里是
   `cloud_restore_allowed` 这一可执行复刻，不是真跑 workflow）；`starkeeper` 混合态
   （mixed）后没有自动收敛重试（契约规定 mixed 保持现状，仅告警）；Pi 上 curl 缺失时的
