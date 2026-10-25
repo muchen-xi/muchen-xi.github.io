@@ -167,7 +167,7 @@ def cfst_scan():
     if not os.path.exists(CFST):
         log("⚠ 未找到 CloudflareST: %s" % CFST)
         return []
-    cmd = [CFST, "-n", "100", "-t", "2", "-tl", "300", "-dd",
+    cmd = [CFST, "-n", "60", "-t", "2", "-tl", "300", "-dd",
            "-url", "https://%s/" % PROBE_HOST, "-o", SCAN_CSV, "-p", "0"]
     t0 = time.time()
     try:
