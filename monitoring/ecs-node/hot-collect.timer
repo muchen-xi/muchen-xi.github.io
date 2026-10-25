@@ -1,0 +1,9 @@
+[Unit]
+Description=Run hot topics collection at 07:30
+
+[Timer]
+OnCalendar=*-*-* 07:30:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

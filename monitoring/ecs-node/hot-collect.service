@@ -1,0 +1,10 @@
+[Unit]
+Description=Collect weekly hot topics from local RSSHub
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/report/hot_collect.py
+TimeoutStartSec=300
+Nice=10

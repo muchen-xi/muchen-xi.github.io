@@ -30,6 +30,7 @@ HISTORY = "/opt/report/history.jsonl"
 PROBE_LOG = "/var/log/probe.log"
 IPOPT_LOG = "/var/log/ipopt.log"
 BACKUP_LOG = "/var/log/mc-backup.log"
+HOT_FILE = "/opt/report/hot.jsonl"
 
 DOMAIN = "chenxiuniverse.top"
 PI_RECORD = "_dr-pi." + DOMAIN
@@ -256,6 +257,43 @@ def collect_ops(hours):
     return ops
 
 
+# ───────────────────────── 04 本周热点 ─────────────────────────
+
+def collect_hot(days=7):
+    """读 hot.jsonl（由 hot_collect.py 每天 07:30 抓的 RSSHub 热榜），
+    按「上榜天数 → 累计榜位分 → 最好名次」挑出最该关注的 8 条。"""
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    agg = {}
+    try:
+        with open(HOT_FILE, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if str(d.get("date", "")) < cutoff:
+                    continue
+                title = str(d.get("title", "")).strip()
+                if len(title) < 6:
+                    continue
+                key = re.sub(r"[\s，。！？“”‘’：；、,.!?:;()（）【】\[\]]+", "", title).lower()
+                a = agg.setdefault(key, {"title": title, "link": d.get("link", ""),
+                                         "days": set(), "sources": set(),
+                                         "score": 0.0, "best": 99})
+                a["days"].add(d.get("date"))
+                a["sources"].add(str(d.get("source", "")))
+                rank = int(d.get("rank", 99) or 99)
+                a["score"] += max(0.2, 1.2 - 0.1 * min(rank, 30))
+                a["best"] = min(a["best"], rank)
+    except OSError:
+        return []
+    items = sorted(agg.values(), key=lambda a: (-len(a["days"]), -a["score"], a["best"]))
+    for a in items:
+        a["days"] = len(a["days"])
+        a["sources"] = sorted(x for x in a["sources"] if x)
+    return items[:8]
+
+
 # ───────────────────────── 渲染（瑞士风格） ─────────────────────────
 
 FONT = "'Helvetica Neue',Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif"
@@ -385,6 +423,41 @@ def build_html(report_type, pi, srv, ops, now):
                  'color:%s;font-weight:400;padding-bottom:6px">DETAIL</th></tr>%s</table>'
                  % (FONT, MUTED, FONT, MUTED, FONT, MUTED, op_rows))
 
+    # 04 本周热点（仅周报）
+    hot_block = ""
+    if report_type == "weekly":
+        hot = collect_hot(7)
+        if hot:
+            hrows = ""
+            for i, item in enumerate(hot, 1):
+                t = esc(item["title"])
+                if len(t) > 52:
+                    t = t[:52] + "…"
+                link = str(item.get("link") or "")
+                if link.startswith("http"):
+                    t = ('<a href="%s" style="color:%s;text-decoration:none;border-bottom:1px solid %s">%s</a>'
+                         % (esc(link), INK, RULE, t))
+                meta = " · ".join(item["sources"])
+                if item["days"] > 1:
+                    meta += " · 上榜 %d 天" % item["days"]
+                hrows += (
+                    '<tr>'
+                    '<td style="padding:12px 10px 12px 0;border-top:1px solid %s;font-family:%s;'
+                    'font-size:11px;color:%s;font-weight:700;width:34px;vertical-align:top">%02d</td>'
+                    '<td style="padding:12px 10px 12px 0;border-top:1px solid %s;font-family:%s;'
+                    'font-size:14px;font-weight:700;color:%s;line-height:1.45">%s'
+                    '<div style="font-family:%s;font-size:10px;font-weight:400;letter-spacing:1.2px;'
+                    'color:%s;margin-top:4px">%s</div></td>'
+                    '</tr>' % (RULE, MONO, RED, i, RULE, FONT, INK, t, FONT, MUTED, esc(meta))
+                )
+            hot_block = section("04", "WEEKLY HIGHLIGHTS", "本周热点",
+                                '<table width="100%" cellpadding="0" cellspacing="0" border="0">' + hrows + '</table>')
+        else:
+            hot_block = section("04", "WEEKLY HIGHLIGHTS", "本周热点",
+                                '<div style="padding:14px 0;border-top:1px solid %s;font-family:%s;'
+                                'font-size:12px;color:%s">本周还没有热点样本（hot.jsonl 为空或采集未运行）。</div>'
+                                % (RULE, FONT, MUTED))
+
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>服务器{kind_cn} {date_big}</title></head>
@@ -410,6 +483,7 @@ def build_html(report_type, pi, srv, ops, now):
   {section("01", "RASPBERRY PI OBSERVER", "树莓派观察者", '<table width="100%" cellpadding="0" cellspacing="0" border="0">' + pi_body + '</table>')}
   {section("02", "SERVER STATUS", "服务器状态", '<table width="100%" cellpadding="0" cellspacing="0" border="0">' + srv_body + '</table>')}
   {section("03", "OPERATIONS LOG", "运维动作", ops_block)}
+  {hot_block}
 
   <div style="border-top:1px solid {RULE};margin:36px 0 0"></div>
   <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
