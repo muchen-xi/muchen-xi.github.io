@@ -34,6 +34,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import alidns_rpc as dns  # noqa: E402
@@ -59,9 +60,9 @@ SCAN_TOP = 20
 
 def load_env_file(path):
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:   # utf-8-sig：容忍 Windows 写入的 BOM
             for line in f:
-                line = line.strip()
+                line = line.lstrip("﻿").strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, _, v = line.partition("=")
@@ -241,8 +242,11 @@ def www_is_backup():
 
 
 def starkeeper_is_backup():
+    """契约口径：default 线路出现 CNAME 才算备站态；
+    oversea 线路本来就是官方 CNAME（starkeeper-bpw.pages.dev），不能据此跳过。"""
     recs = dns.describe_records(DOMAIN, "starkeeper")
-    return any(str(r.get("Type", "")).upper() == "CNAME" for r in recs)
+    return any(str(r.get("Type", "")).upper() == "CNAME"
+               and (r.get("Line") or "default") == "default" for r in recs)
 
 
 # ─────────────────────────── 主流程 ───────────────────────────
@@ -278,21 +282,39 @@ def main():
         candidates.setdefault(ip, None)      # 现网 IP 作基线，防止"新不如旧"
 
     measured = {}
-    for ip in list(candidates)[:40]:
-        ok, med = probe_ip(ip)
-        if ok < 2 or med <= 0:
-            continue
-        local = med
-        idms = itdog.get(ip)
-        score = local if idms is None else 0.65 * local + 0.35 * idms
-        measured[ip] = {"local": round(local, 1), "itdog": idms, "score": round(score, 1)}
-    ranked = sorted(measured.items(), key=lambda kv: kv[1]["score"])
-    log("健康探测通过 %d 个；Top: %s" % (len(ranked), ", ".join(
-        "%s=%.0fms" % (ip, v["score"]) for ip, v in ranked[:5])))
+    cand_list = list(candidates)[:40]
 
-    if not ranked:
+    def _probe(ip):
+        ok, med = probe_ip(ip)
+        return ip, ok, med
+
+    # 并发探测：串行时不可达 IP 会按 --max-time 8s×3 拖到十几分钟，
+    # 8 路并发后整轮到 30~60 秒（Cloudflare 侧对 8 个静默 TLS 连接无压力）。
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for ip, ok, med in ex.map(_probe, cand_list):
+            if ok < 2 or med <= 0:
+                continue
+            measured[ip] = {"local": round(med, 1), "itdog": itdog.get(ip)}
+    if not measured:
         notify("优选IP: 本轮无可用 IP", "机房扫描与健康探测均未得到可用 IP，DNS 未改动。")
         return 1
+
+    # 机房延迟（TLS 建连）与 ITDog 延迟（ICMP）量纲不同，先各自 min-max 归一化再加权；
+    # 未被 ITDog 覆盖的 IP 取中性值 0.5，避免"没进 ITDog 名单"被当成差评。
+    locals_ = [v["local"] for v in measured.values()]
+    lo, hi = min(locals_), max(locals_)
+
+    def norm(x, a, b):
+        return 0.5 if b <= a else (b - x) / (b - a)
+
+    id_vals = [v for v in itdog.values() if v]
+    ilo, ihi = (min(id_vals), max(id_vals)) if id_vals else (0.0, 0.0)
+    for v in measured.values():
+        v["score"] = round(0.65 * norm(v["local"], lo, hi)
+                           + 0.35 * (norm(v["itdog"], ilo, ihi) if v["itdog"] else 0.5), 4)
+    ranked = sorted(measured.items(), key=lambda kv: -kv[1]["score"])
+    log("健康探测通过 %d 个；Top: %s" % (len(ranked), ", ".join(
+        "%s=%.3f(local %.0fms)" % (ip, v["score"], v["local"]) for ip, v in ranked[:5])))
 
     chosen = [ip for ip, _ in ranked[:n_a]]
     www_backup = False
@@ -304,7 +326,7 @@ def main():
     publish_board({
         "v": 1, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "who": "ecs",
         "mode": mode,
-        "ips": ["%s:%.0f" % (ip, v["score"]) for ip, v in ranked[:n_a]],
+        "ips": ["%s:%.0f" % (ip, v["local"]) for ip, v in ranked[:n_a]],
         "gh_age": gh_age,
     })
 
@@ -340,7 +362,7 @@ def main():
         notify("优选IP: 机房节点已更新 DNS",
                "更新: %s\nIP: %s\n\n评分: %s" % (
                    ",".join(changed), ", ".join(chosen),
-                   ", ".join("%s=%.0f" % (ip, v["score"]) for ip, v in ranked[:n_a])))
+                   ", ".join("%s=%.3f" % (ip, v["score"]) for ip, v in ranked[:n_a])))
     else:
         log("DNS 无变化")
     return 0
