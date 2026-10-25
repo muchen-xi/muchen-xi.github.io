@@ -59,7 +59,18 @@
   </footer>
 </div>
 <script>
-fetch('/api/hot').then(r=>r.json()).then(d=>{
+// 同源 /api/hot 在自定义域上会被 248200.xyz 的 WAF 托管挑战拦成 403，
+// 因此失败时回退到 pages.dev 直连（Function 已开 CORS）。
+const API_FALLBACK = 'https://hot-248200.pages.dev/api/hot';
+function load(url, isFallback){
+  fetch(url).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json() })
+    .then(render)
+    .catch(()=>{ if(!isFallback){ load(API_FALLBACK, true); } else { fail(); } });
+}
+function fail(){
+  document.getElementById('list').innerHTML='<div class="num">!!</div><div class="empty">取数失败，稍后再试。</div>';
+}
+function render(d){
   const list=document.getElementById('list');
   const dateEl=document.getElementById('date');
   const ts=d.updated_at?new Date(d.updated_at):new Date();
@@ -75,9 +86,8 @@ fetch('/api/hot').then(r=>r.json()).then(d=>{
     return `<div class="num">${n}</div><div class="item">${title}<div class="meta">${escapeHtml(src)}${days}</div></div>`;
   }).join('');
   document.getElementById('meta').textContent='数据源：'+(d.sources||[]).join(' · ');
-}).catch(()=>{
-  document.getElementById('list').innerHTML='<div class="num">!!</div><div class="empty">取数失败，稍后再试。</div>';
-});
+}
+load('/api/hot', false);
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 </script>
 </body>
