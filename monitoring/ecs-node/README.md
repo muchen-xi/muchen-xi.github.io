@@ -13,6 +13,21 @@
 | CloudflareST | `/opt/cfst/CloudflareST`（v2.2.5，与 GitHub 侧同版本） |
 | 日志 | `/var/log/probe.log`、`/var/log/ipopt.log` |
 
+## 服务器日报 / 周报（2026-10-25 起）
+
+| 文件 | 服务器路径 | 触发 |
+|---|---|---|
+| `report.py` | `/opt/report/report.py` | `report-daily.timer` 每天 08:00；`report-weekly.timer` 周日 08:05 |
+| SMTP 配置 | `/opt/report/env`（600，从树莓派 `/etc/dr-agent.env` 迁过来） | 主 mail.gov.moe → 备 smtp.qq.com |
+| 日志 / 历史 | `/var/log/report.log`、`/opt/report/history.jsonl` | — |
+
+内容三段：01 树莓派观察者状态、02 过去服务器状态（24h/7d）、03 过去的运维动作
+（IP 优选改 DNS、MC 备份、容灾切换、四类告警）。版式为瑞士国际主义：大号日期、
+红色细线、编号章节、发丝分隔线、右对齐等宽数字。
+
+树莓派侧已用 `DR_HEARTBEAT_ENABLED=0` 关掉原来的 08:00 心跳邮件（避免重复），
+天气推送（`morning-push.timer` 05:00）不受影响。
+
 ## 数据流
 
 ```

@@ -1,0 +1,10 @@
+[Unit]
+Description=Server weekly report (Swiss style) via email
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/report/report.py weekly
+TimeoutStartSec=300
+Nice=10
