@@ -36,7 +36,7 @@ from alibabacloud_alidns20150109 import models as alidns_models
 from alibabacloud_tea_openapi import models as open_api_models
 
 DOMAIN = "chenxiuniverse.top"
-TOP_N = 3  # 每条线路保留 N 个最优 IP
+TOP_N = int(os.environ.get("TOP_N", "5"))  # 每条线路保留 N 个最优 IP（2026-10-25 由 3 提到 5）
 TTL = 600
 
 # 需要管理的子域和线路
@@ -339,6 +339,9 @@ def main():
     overseas_csv = sys.argv[1] if len(sys.argv) > 1 else "result.csv"
     china_csv = sys.argv[2] if len(sys.argv) > 2 else "china_result.csv"
     dry_run = "--dry-run" in sys.argv
+    # 机房主节点在线时（_ip-opt-ecs 新鲜），default(境内) 线路归它管，
+    # 本流水线只维护 oversea 线路 —— 服务降级但不缺位（cf-ip-optimize.yml 里判定）
+    skip_china = os.environ.get("SKIP_CHINA_LINE", "0").strip() in ("1", "true", "yes")
 
     # 读取 IP
     overseas_ips = read_ips(overseas_csv)
@@ -416,6 +419,9 @@ def main():
             continue
         if rr == "starkeeper" and starkeeper_backup:
             print(f"⚠ {rr}.{DOMAIN} ({line}): 星钥容灾备份模式，跳过")
+            continue
+        if skip_china and line == "default":
+            print(f"⚠ {rr}.{DOMAIN} (default): 机房主节点在线，境内线路归机房维护，本流水线跳过")
             continue
 
         ips = china_ips if csv_source == "china" else overseas_ips

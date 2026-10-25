@@ -1,0 +1,10 @@
+[Unit]
+Description=IP optimization (datacenter node, every 3h)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/ipopt/ipopt_ecs.py
+TimeoutStartSec=600
+Nice=10

@@ -1,7 +1,7 @@
 name: CF优选IP智能优化
 on:
   schedule:
-    - cron: '37 */6 * * *'   # 每6小时，37分避开整点
+    - cron: '37 */3 * * *'   # 每3小时，37分避开整点（2026-10-25 由 6h 缩短为 3h）
   workflow_dispatch:          # 允许手动触发
 
 permissions:
@@ -123,6 +123,27 @@ jobs:
             echo "⚠️ 境内IP健康验证失败，本轮跳过境内线路"
             echo "china_valid=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: 发布会签记录 _ip-opt-gh
+        if: always()
+        continue-on-error: true    # TXT 权限不足时不得阻断 DNS 更新
+        run: |
+          python3 monitoring/scripts/ipopt_board.py publish-gh china_result.csv result.csv
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
+
+      - name: 判决机房主节点是否在线（服务降级开关）
+        id: ecs
+        if: always()
+        continue-on-error: true
+        run: |
+          FRESH=$(python3 monitoring/scripts/ipopt_board.py ecs-fresh --max-age 14400 || echo false)
+          echo "机房主节点在线: $FRESH"
+          echo "fresh=$FRESH" >> $GITHUB_OUTPUT
+        env:
+          ALI_KEY_ID: ${{ secrets.ALI_ACCESS_KEY_ID }}
+          ALI_KEY_SECRET: ${{ secrets.ALI_ACCESS_KEY_SECRET }}
 
       - name: 更新 DNS（分线路）
         run: |

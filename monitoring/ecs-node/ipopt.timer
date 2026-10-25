@@ -1,0 +1,10 @@
+[Unit]
+Description=Run IP optimization every 3 hours
+
+[Timer]
+OnCalendar=*-*-* 00/3:20:00
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
