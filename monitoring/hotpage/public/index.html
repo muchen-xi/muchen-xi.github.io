@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本周热点 · CHENXI UNIVERSE</title>
+<style>
+  :root{
+    --ink:#0a0a0a; --muted:#6b6b6b; --rule:#d8d8d4; --red:#e30613; --paper:#f4f4f2;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Helvetica Neue",Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:760px; margin:0 auto; padding:48px 24px 80px}
+  header{display:flex; justify-content:space-between; align-items:flex-end; gap:16px;
+    font-size:10px; letter-spacing:3px; text-transform:uppercase; color:var(--muted)}
+  header .right{color:var(--ink)}
+  .rule{height:3px;background:var(--ink);margin:12px 0 0}
+  .date{font-size:64px;line-height:.95;font-weight:700;letter-spacing:-3px;margin:22px 0 6px}
+  .accent{height:6px;width:64px;background:var(--red);margin-bottom:44px}
+  .grid{display:grid;grid-template-columns:64px 1fr;column-gap:16px}
+  .num{font:700 12px/1.9 "SF Mono",Consolas,monospace;color:var(--red);letter-spacing:1px}
+  .item{padding:18px 0;border-top:1px solid var(--rule)}
+  .item:first-child{border-top:2px solid var(--ink)}
+  a.title{color:var(--ink);text-decoration:none;font-size:19px;font-weight:700;line-height:1.45;
+    border-bottom:1px solid transparent}
+  a.title:hover{border-bottom-color:var(--red);color:var(--red)}
+  .meta{margin-top:6px;font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:var(--muted)}
+  .meta b{color:var(--ink);font-weight:700}
+  footer{margin-top:56px;padding-top:16px;border-top:1px solid var(--rule);
+    font-size:11px;line-height:1.9;color:var(--muted)}
+  .empty{padding:40px 0;color:var(--muted);font-size:13px}
+  @media (max-width:520px){
+    .date{font-size:46px} .grid{grid-template-columns:40px 1fr} a.title{font-size:16px}
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--ink:#f2f2f0;--muted:#9a9a96;--rule:#33332f;--paper:#0c0c0b}
+    .rule{background:var(--ink)}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>Chenxi Universe · Weekly Signals</div>
+    <div class="right">热榜 / 周</div>
+  </header>
+  <div class="rule"></div>
+  <div class="date" id="date">—</div>
+  <div class="accent"></div>
+  <div class="grid" id="list"><div class="num">00</div><div class="empty">正在取本周热点…</div></div>
+  <footer>
+    <div id="meta">数据源：知乎热榜 · B站排行 · Solidot · 36氪</div>
+    <div>排序：上榜天数 → 累计榜位 → 最好名次；每天采集一次，每周汇总。</div>
+    <div>CHENXI UNIVERSE · <a href="https://248200.xyz" style="color:inherit">248200.xyz</a></div>
+  </footer>
+</div>
+<script>
+fetch('/api/hot').then(r=>r.json()).then(d=>{
+  const list=document.getElementById('list');
+  const dateEl=document.getElementById('date');
+  const ts=d.updated_at?new Date(d.updated_at):new Date();
+  dateEl.textContent=String(ts.getDate()).padStart(2,'0')+'.'+String(ts.getMonth()+1).padStart(2,'0')+'.'+ts.getFullYear();
+  const items=d.items||[];
+  if(!items.length){list.innerHTML='<div class="num">00</div><div class="empty">本周还没有样本，等下一次采集。</div>';return}
+  list.innerHTML=items.map((it,i)=>{
+    const n=String(i+1).padStart(2,'0');
+    const title=it.link?`<a class="title" href="${it.link}" target="_blank" rel="noopener">${escapeHtml(it.title)}</a>`
+                        :`<span class="title">${escapeHtml(it.title)}</span>`;
+    const src=(it.sources||[]).join(' · ');
+    const days=it.days>1?` · <b>上榜 ${it.days} 天</b>`:'';
+    return `<div class="num">${n}</div><div class="item">${title}<div class="meta">${escapeHtml(src)}${days}</div></div>`;
+  }).join('');
+  document.getElementById('meta').textContent='数据源：'+(d.sources||[]).join(' · ');
+}).catch(()=>{
+  document.getElementById('list').innerHTML='<div class="num">!!</div><div class="empty">取数失败，稍后再试。</div>';
+});
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+</script>
+</body>
+</html>

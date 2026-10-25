@@ -1,10 +1,11 @@
 [Unit]
-Description=Collect weekly hot topics from local RSSHub
+Description=Collect weekly hot topics from local RSSHub, then push to Cloudflare KV
 After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 /opt/report/hot_collect.py
+ExecStartPost=/usr/bin/python3 /opt/report/push_hot.py
 TimeoutStartSec=300
 Nice=10

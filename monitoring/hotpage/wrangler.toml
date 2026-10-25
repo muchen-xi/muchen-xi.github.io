@@ -1,0 +1,6 @@
+name = "hot-248200"
+pages_build_output_dir = "public"
+
+[[kv_namespaces]]
+binding = "HOT_DATA"
+id = "7de4583a6c134432b4b7390ad8aec0f9"
