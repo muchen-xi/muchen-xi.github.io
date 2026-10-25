@@ -236,6 +236,109 @@ def get_pi_observer() -> dict:
         return {}
 
 
+# ─── 机房主节点（ECS · _ip-opt-ecs / _ip-opt-gh 会签，best-effort） ───
+
+IPOPT_SELF_RECORD = "_ip-opt-ecs"
+IPOPT_GH_RECORD = "_ip-opt-gh"
+ECS_FRESH_SECONDS = 4 * 3600      # 与 ipopt_board.ecs-fresh 的 --max-age 保持一致
+
+
+def _load_alidns_rpc():
+    try:
+        import alidns_rpc  # type: ignore
+        return alidns_rpc
+    except Exception:
+        pass
+    try:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "alidns_rpc.py"
+        if not path.exists():
+            return None
+        spec = importlib.util.spec_from_file_location("alidns_rpc", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+def _read_ipopt_record(name: str) -> dict:
+    module = _load_alidns_rpc()
+    if module is None:
+        return {}
+    try:
+        raw = module.get_txt(name, DOMAIN) or ""
+    except (Exception, SystemExit):
+        return {}
+    if not raw:
+        return {}
+    if raw.startswith('"') and raw.endswith('"'):
+        raw = raw[1:-1]
+    raw = raw.replace('\\"', '"').replace("\\\\", "\\")
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except ValueError:
+        return {}
+
+
+def build_ecs_section() -> str:
+    """「机房主节点」卡片：运行模式、最近一轮 IP、心跳新鲜度、上游 ITDog 数据年龄。"""
+    ecs = _read_ipopt_record(IPOPT_SELF_RECORD)
+    if not ecs:
+        return ('<div class="card"><p class="label">暂未收到机房节点会签记录'
+                '（_ip-opt-ecs 不可用，GitHub 流水线仍在兜底维护 default 线路）</p></div>')
+    age = None
+    try:
+        ts = datetime.fromisoformat(str(ecs.get("ts", "")).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - ts).total_seconds()
+    except (ValueError, TypeError):
+        age = None
+
+    if age is None:
+        state_html, age_txt = '<span class="warn">⚠ 时间戳异常</span>', "?"
+    elif age > ECS_FRESH_SECONDS:
+        state_html, age_txt = ('<span class="bad">❌ 心跳过期（GitHub 已接管 default 线路）</span>',
+                               f"{int(age // 60)} 分钟前")
+    else:
+        state_html, age_txt = '<span class="good">✅ 在线</span>', f"{int(max(age, 0) // 60)} 分钟前"
+
+    mode = str(ecs.get("mode", "?"))
+    mode_txt = {"apply": "主节点（维护 A 记录）", "publish": "灰度观测（不写 A 记录）"}.get(mode, mode)
+    ips = ecs.get("ips") or []
+    if isinstance(ips, list) and ips:
+        ips_txt = " · ".join(str(x) for x in ips)
+    else:
+        ips_txt = "—"
+
+    gh_age = ecs.get("gh_age")
+    try:
+        gh_age_txt = f"{int(int(gh_age) // 60)} 分钟前" if gh_age is not None else "—"
+    except (TypeError, ValueError):
+        gh_age_txt = "—"
+
+    gh = _read_ipopt_record(IPOPT_GH_RECORD)
+    itdog = gh.get("itdog") if isinstance(gh.get("itdog"), list) else []
+    itdog_txt = " · ".join(str(x) for x in itdog) if itdog else "—"
+
+    return f"""<div class="card">
+  <table>
+    <tr><td class="label">状态</td><td class="value">{state_html}</td></tr>
+    <tr><td class="label">最近心跳</td><td class="value">{age_txt}</td></tr>
+    <tr><td class="label">运行模式</td><td class="value">{mode_txt}</td></tr>
+    <tr><td class="label">本轮选用 IP（机房延迟 ms）</td>
+        <td class="value" style="font-family:monospace;font-size:0.85em">{ips_txt}</td></tr>
+    <tr><td class="label">上游 ITDog（GitHub 会签）</td>
+        <td class="value" style="font-family:monospace;font-size:0.85em">{itdog_txt}</td></tr>
+    <tr><td class="label">ITDog 数据年龄</td><td class="value">{gh_age_txt}</td></tr>
+  </table>
+</div>"""
+
+
 def build_observer_section() -> str:
     """生成「树莓派观察者」卡片 HTML：心跳时间、是否在线、判定、线路 HTTP 码、温度。"""
     try:
@@ -388,6 +491,7 @@ def build_html(report_type: str) -> str:
     stats = read_stats(since_days=stats_days)
     dns = get_current_dns_state()
     observer_section = build_observer_section()
+    ecs_section = build_ecs_section()
     traffic = get_traffic_stats(days=(1 if report_type == "daily" else 7))
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -510,6 +614,9 @@ def build_html(report_type: str) -> str:
 <h2>🖥️ 树莓派观察者</h2>
 {observer_section}
 
+<h2>🏢 机房主节点（ECS · 乌兰察布）</h2>
+{ecs_section}
+
 <h2>📈 页面访问量</h2>
 <div class="card">
   <table>
@@ -540,6 +647,8 @@ def build_html(report_type: str) -> str:
 </div>
 
 <div class="footer">
+  <p>微信告警只发四类：<b>服务器故障 · CVE 高危漏洞 · 不在计划内的 IP 切换 · 主站宕机</b><br>
+  其余（健康站 / 进化史 / 星钥官网可用性、会签分歧、优选成功）只记录，不打扰。</p>
   <p>晨曦的宇宙 · 自动监控系统<br>
   <a href="https://www.chenxiuniverse.top">chenxiuniverse.top</a> ·
   <a href="https://github.com/muchen-xi/muchen-xi.github.io">muchen-xi.github.io</a></p>
