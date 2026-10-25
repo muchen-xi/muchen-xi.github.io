@@ -88,7 +88,12 @@ def log(msg):
         pass
 
 
-def notify(title, desp):
+def notify(kind, title, desp):
+    """报警口径只有四类（2026-10-25 用户定稿）：服务器故障 / CVE高危漏洞 /
+    不在计划内的IP切换 / 主站宕机。其它一律降级为日志。"""
+    if kind not in ("服务器故障", "CVE高危漏洞", "不在计划内的IP切换", "主站宕机"):
+        log("SUPPRESS-NOTIFY [%s] %s" % (kind, title))
+        return
     key = None
     try:
         with open(SYSTEMD_ENV, encoding="utf-8") as f:
@@ -101,11 +106,12 @@ def notify(title, desp):
     if not key:
         return
     try:
-        data = urllib.parse.urlencode({"title": title, "desp": desp}).encode()
+        data = urllib.parse.urlencode({"title": "%s: %s" % (kind, title),
+                                       "desp": desp}).encode()
         req = urllib.request.Request("https://sctapi.ftqq.com/%s.send" % key, data=data,
                                      headers={"User-Agent": "ecs-ipopt/1.0"})
         urllib.request.urlopen(req, timeout=10).read()
-        log("NOTIFY %s" % title)
+        log("NOTIFY %s: %s" % (kind, title))
     except Exception as e:  # 通知失败绝不阻断主流程
         log("NOTIFY-FAIL %s: %s" % (type(e).__name__, e))
 
@@ -296,7 +302,7 @@ def main():
                 continue
             measured[ip] = {"local": round(med, 1), "itdog": itdog.get(ip)}
     if not measured:
-        notify("优选IP: 本轮无可用 IP", "机房扫描与健康探测均未得到可用 IP，DNS 未改动。")
+        notify("服务器故障", "优选IP 本轮无可用 IP", "机房扫描与健康探测均未得到可用 IP，DNS 未改动。")
         return 1
 
     # 机房延迟（TLS 建连）与 ITDog 延迟（ICMP）量纲不同，先各自 min-max 归一化再加权；
@@ -335,7 +341,6 @@ def main():
         return 0
     if www_backup:
         log("⚠ 权威记录显示 www 处于容灾备站状态 — 本轮不改 DNS")
-        notify("优选IP: 跳过（容灾备份态）", "检测到 www 处于备站状态，机房节点不改 DNS。")
         return 0
 
     changed = []
@@ -356,15 +361,19 @@ def main():
                 log("✅ %s default 已更新 → %s" % (rr, chosen))
         except (Exception, SystemExit) as e:
             log("❌ %s 更新失败: %s" % (rr, e))
-            notify("优选IP: %s 更新失败" % rr, "%s\n\n%s" % (rr, e))
+            notify("服务器故障", "优选IP 更新 %s 失败" % rr, "%s\n\n%s" % (rr, e))
 
     if changed:
-        notify("优选IP: 机房节点已更新 DNS",
-               "更新: %s\nIP: %s\n\n评分: %s" % (
-                   ",".join(changed), ", ".join(chosen),
-                   ", ".join("%s=%.3f" % (ip, v["score"]) for ip, v in ranked[:n_a])))
+        log("DNS 已更新: %s -> %s" % (",".join(changed), ", ".join(chosen)))
     else:
         log("DNS 无变化")
+
+    # 给探针的"计划内期望值"：探针据此识别"不在计划内的 IP 切换"。
+    try:
+        with open("/opt/ipopt/expected.json", "w", encoding="utf-8") as f:
+            json.dump({"ts": time.time(), "mode": mode, "www": chosen}, f)
+    except OSError as e:
+        log("⚠ 写 expected.json 失败: %s" % e)
     return 0
 
 
@@ -375,5 +384,5 @@ if __name__ == "__main__":
         raise
     except Exception as exc:
         log("❌ 未捕获异常: %s: %s" % (type(exc).__name__, exc))
-        notify("优选IP: 机房节点异常", "%s: %s" % (type(exc).__name__, exc))
+        notify("服务器故障", "优选IP 机房节点异常", "%s: %s" % (type(exc).__name__, exc))
         sys.exit(2)
